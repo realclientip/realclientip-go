@@ -9,96 +9,127 @@ import (
 	"strings"
 )
 
-/*
-TODO:
- * IPv6 zone '%'
- * instead of `type Strategy`, should instead be interface? How will it work if a function takes a Strategy but someone wants to use that "interface" without using this package?
-*/
-
 const (
 	// Pre-canonicalized constants to avoid typos later on
 	xForwardedForHdr = "X-Forwarded-For"
 	forwardedHdr     = "Forwarded"
 )
 
-// A Strategy will return empty string if there is no derivable IP. This should be treated as a misconfiguration error.
+// A Strategy will return empty string if there is no derivable IP. In many cases this
+// should be treated as a misconfiguration error, unless the strategy is attempting to get
+// an untrustworthy or optional value.
 type Strategy func(headers http.Header, remoteAddr string) string
 
+// Must panics if err is not nil. This can be used to make sure the Strategy-making
+// functions do not return an error. It can also facilitate calling ChainStrategies.
+func Must(strat Strategy, err error) Strategy {
+	if err != nil {
+		panic(fmt.Sprintf("err is not nil: %v", err))
+	}
+	return strat
+}
+
+// ChainStrategies attempts to use the given strategies in order. If the first one returns
+// an empty string, the second one is tried, and so on, until a good IP is found or the
+// strategies are exhausted. The IP may contain a zone identifier.
+// A common use for this is if a server is both directly connected to the internet and
+// expecting a header to check. It might be called like:
+//   ChainStrategies(Must(LeftmostNonPrivateStrategy("X-Forwarded-For")), RemoteAddrStrategy)
 func ChainStrategies(strategies ...Strategy) Strategy {
 	return func(headers http.Header, remoteAddr string) string {
 		for _, strat := range strategies {
 			result := strat(headers, remoteAddr)
 			if result != "" {
-				return ""
+				return result
 			}
 		}
 		return ""
 	}
 }
 
+// RemoteAddrStrategy returns the remoteAddr IP, stripped of port. The IP may contain a
+// zone identifier.
+// If the IP is invalid, empty string will be returned. (This should not happen if
+// req.RemoteAddr is passed without modification.)
+// This Strategy should be used if the server is directly connected to the internet.
 func RemoteAddrStrategy(_ http.Header, remoteAddr string) string {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err == nil {
-		remoteAddr = host
-	}
-
-	ip := net.ParseIP(remoteAddr)
-	if ip == nil {
+	ipAddr := goodIPAddr(remoteAddr)
+	if ipAddr == nil {
 		return ""
 	}
 
-	return ip.String()
+	return ipAddr.String()
 }
 
+// SingleIPHeaderStrategy creates a Strategy for deriving an IP address from a single-IP
+// header. The IP may contain a zone identifier.
+// If the IP is invalid, the Strategy returns an empty string.
+// A non-exhaustive list of such single-IP headers is:
+// X-Real-IP, CF-Connecting-IP, True-Client-IP, Fastly-Client-IP, X-Azure-ClientIP, X-Azure-SocketIP
+// This Strategy should be used when the given header is added by a trusted reverse proxy.
+// You must ensure that this header is not spoofable (as is possible with Akamai's use of
+// True-Client-IP, Fastly's default use of Fastly-Client-IP, and Azure's X-Azure-ClientIP).
 func SingleIPHeaderStrategy(headerName string) (Strategy, error) {
 	if headerName == "" {
 		return nil, fmt.Errorf("SingleIPHeaderStrategy header must not be empty")
 	}
 
+	// We will be using the headerName for lookups in the http.Header map, which is keyed
+	// by canonicalized header name. We'll do that here so we only have to do it once.
 	canonicalHeaderKey := http.CanonicalHeaderKey(headerName)
 	if canonicalHeaderKey == xForwardedForHdr || canonicalHeaderKey == forwardedHdr {
 		return nil, fmt.Errorf("SingleIPHeaderStrategy header must not be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
 	strat := func(headers http.Header, _ string) string {
-		ipString := lastHeader(headers, canonicalHeaderKey)
-		ip := net.ParseIP(ipString)
-		if ip == nil {
-			// net.ParseIP returns nil on error. We don't want to return a value that's
-			// not really an IP.
+		// RFC 2616 does not allow multiple instances of single-IP headers (or any non-list header).
+		// It is debatable whether it is better to treat multiple such headers as an error
+		// (more correct) or simply pick one of them (more flexible). As we've already
+		// told the user tom make sure the header is not spoofable, we're going to use the
+		// last header instance if there are multiple. (Using the last is arbitrary, but
+		// in theory it should be the newest value.)
+		ipStr := lastHeader(headers, canonicalHeaderKey)
+		if ipStr == "" {
+			// There is no header
 			return ""
 		}
 
-		// In case there's a way of encoding an IP in multiple ways that are actually the
-		// same IP (like "192.0.2.1" and "::ffff:192.0.2.1", and the various collapsed
-		// states of IPv6), we're going to use the stringification of the parsed IP to
-		// normalize the string.
-		return ip.String()
+		ipAddr := goodIPAddr(ipStr)
+		if ipAddr == nil {
+			// The header value is invalid
+			return ""
+		}
+
+		return ipAddr.String()
 	}
 
 	return strat, nil
 }
 
-// Leftmostish is a Strategy that returns the leftmost valid and non-private IP address.
+// LeftmostNonPrivateStrategy creates a Strategy that returns the leftmost valid and
+// non-private IP address. The IP may contain a zone identifier.
 // headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
 // those headers is quite different, so make sure you use the one appropriate to your
 // network configuration.)
-func LeftmostishStrategy(headerName string) (Strategy, error) {
+// If the IP is invalid, the Strategy returns an empty string.
+// This Strategy should be used when a valid, non-private IP closest to the client is desired.
+// Note that this MUST NOT BE USED FOR SECURITY PURPOSES. This IP can be TRIVIALLY SPOOFED.
+func LeftmostNonPrivateStrategy(headerName string) (Strategy, error) {
 	if headerName == "" {
-		return nil, fmt.Errorf("LeftmostishStrategy header must not be empty")
+		return nil, fmt.Errorf("LeftmostNonPrivateStrategy header must not be empty")
 	}
 
 	// We will be using the headerName for lookups in the http.Header map, which is keyed
 	// by canonicalized header name. We'll do that here so we only have to do it once.
 	canonicalHeaderKey := http.CanonicalHeaderKey(headerName)
 	if canonicalHeaderKey != xForwardedForHdr && canonicalHeaderKey != forwardedHdr {
-		return nil, fmt.Errorf("LeftmostishStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
+		return nil, fmt.Errorf("LeftmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
 	strat := func(headers http.Header, _ string) string {
-		ips := getIPList(headers, canonicalHeaderKey)
-		for _, ip := range ips {
-			if ip != nil && !isPrivateOrLocal(ip) {
+		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
+		for _, ip := range ipAddrs {
+			if ip != nil && !isPrivateOrLocal(ip.IP) {
 				// This is the leftmost valid, non-private IP
 				return ip.String()
 			}
@@ -111,6 +142,14 @@ func LeftmostishStrategy(headerName string) (Strategy, error) {
 	return strat, nil
 }
 
+// RightmostNonPrivateStrategy creates a Strategy that returns the rightmost valid,
+// non-private/non-internal IP address. The IP may contain a zone identifier.
+// headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
+// those headers is quite different, so make sure you use the one appropriate to your
+// network configuration.)
+// If the IP is invalid, the Strategy returns an empty string.
+// This Strategy should be used when  all the reverse proxies between the internet and the
+// server have private-space IP addresses.
 func RightmostNonPrivateStrategy(headerName string) (Strategy, error) {
 	if headerName == "" {
 		return nil, fmt.Errorf("RightmostNonPrivateStrategy header must not be empty")
@@ -124,11 +163,12 @@ func RightmostNonPrivateStrategy(headerName string) (Strategy, error) {
 	}
 
 	strat := func(headers http.Header, _ string) string {
-		ips := getIPList(headers, canonicalHeaderKey)
-		for i := len(ips) - 1; i >= 0; i-- {
-			if ips[i] != nil && !isPrivateOrLocal(ips[i]) {
+		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
+		// Look backwards through the list of IP addresses
+		for i := len(ipAddrs) - 1; i >= 0; i-- {
+			if ipAddrs[i] != nil && !isPrivateOrLocal(ipAddrs[i].IP) {
 				// This is the rightmost non-private IP
-				return ips[i].String()
+				return ipAddrs[i].String()
 			}
 		}
 
@@ -139,13 +179,25 @@ func RightmostNonPrivateStrategy(headerName string) (Strategy, error) {
 	return strat, nil
 }
 
+// RightmostTrustedCountStrategy creates a Strategy that returns the valid
+// IP address added by the first trusted reverse proxy. trustedCount is the number of
+// reverse proxies between the internet and the server. It must be greater than zero. The
+// IP returned will be the (trustedCount-1)th from the right. For example, if there's only
+// one trusted proxy, this strategy will return the last (rightmost) IP address.
+// The IP may contain a zone identifier.
+// headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
+// those headers is quite different, so make sure you use the one appropriate to your
+// network configuration.)
+// If the IP is invalid, the Strategy returns an empty string.
+// This Strategy should be used when there is a fixed number of reverse proxies between
+// the internet and the server.
 func RightmostTrustedCountStrategy(headerName string, trustedCount int) (Strategy, error) {
 	if headerName == "" {
 		return nil, fmt.Errorf("RightmostTrustedCountStrategy header must not be empty")
 	}
 
-	if trustedCount < 0 {
-		return nil, fmt.Errorf("RightmostTrustedCountStrategy count must not be negative")
+	if trustedCount <= 0 {
+		return nil, fmt.Errorf("RightmostTrustedCountStrategy count must be greater than zero")
 	}
 
 	// We will be using the headerName for lookups in the http.Header map, which is keyed
@@ -156,17 +208,19 @@ func RightmostTrustedCountStrategy(headerName string, trustedCount int) (Strateg
 	}
 
 	strat := func(headers http.Header, _ string) string {
-		ips := getIPList(headers, canonicalHeaderKey)
+		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
 
-		if len(ips) < trustedCount {
+		// We want the (N-1)th from the rightmost. For example, if there's only one
+		// trusted proxy, we want the last.
+		rightmostIndex := len(ipAddrs) - 1
+		targetIndex := rightmostIndex - (trustedCount - 1)
+
+		if targetIndex < 0 {
 			// This is a misconfiguration error. There were fewer IPs than we expected.
 			return ""
 		}
 
-		// We want the (N-1)th from the rightmost. For example, if there's only one
-		// trusted proxy, we want the last.
-		lastIndex := len(ips) - 1
-		resultIP := ips[lastIndex-trustedCount-1]
+		resultIP := ipAddrs[targetIndex]
 
 		if resultIP == nil {
 			// This is a misconfiguration error. Our first trusted proxy didn't add a
@@ -180,24 +234,42 @@ func RightmostTrustedCountStrategy(headerName string, trustedCount int) (Strateg
 	return strat, nil
 }
 
-func AddressesAndRangesToIPNets(ranges []string) ([]*net.IPNet, error) {
-	// Adapted from: https://github.com/caddyserver/caddy/blob/a7de48be1511d7345af78ae0539f53f28623e43d/modules/caddyhttp/reverseproxy/reverseproxy.go#L206-L227
+// AddressesAndRangesToIPNets converts a slice of strings with IPv4 and IPv6 addresses and
+// CIDR ranges (prefixes) to net.IPNet instances.
+// If net.ParseCIDR or net.ParseIP fail, an error will be returned.
+// Zones in addresses or ranges are not allowed and will result in an error. This is because:
+// 	- net.ParseCIDR will fail to parse a range with a zone
+//	- netip.ParsePrefix will succeed but silently throw away the zone;
+//	  then netip.Prefix.Contains will return false for any IP with a zone,
+//	  causing confusion and bugs
+func AddressesAndRangesToIPNets(ranges ...string) ([]*net.IPNet, error) {
 	var result []*net.IPNet
-	for _, rng := range ranges {
-		if strings.Contains(rng, "/") {
-			_, ipNet, err := net.ParseCIDR(rng)
+	for _, r := range ranges {
+		if strings.Contains(r, "%") {
+			return nil, fmt.Errorf("zones are not allowed: %q", r)
+		}
+
+		if strings.Contains(r, "/") {
+			// This is a CIDR/prefix
+			_, ipNet, err := net.ParseCIDR(r)
 			if err != nil {
-				return nil, fmt.Errorf("net.ParseCIDR failed for %q: %w", rng, err)
+				return nil, fmt.Errorf("net.ParseCIDR failed for %q: %w", r, err)
 			}
 			result = append(result, ipNet)
 		} else {
-			ip := net.ParseIP(rng)
+			// This is a single IP; convert it to a range including only itself
+			ip := net.ParseIP(r)
 			if ip == nil {
-				return nil, fmt.Errorf("net.ParseIP failed for %q", rng)
+				return nil, fmt.Errorf("net.ParseIP failed for %q", r)
 			}
+
+			// To use the right size IP and  mask, we need to know if the address is IPv4 or v6.
+			// Attempt to convert it to IPv4 to find out.
 			if ipv4 := ip.To4(); ipv4 != nil {
 				ip = ipv4
 			}
+
+			// Mask all the bits
 			mask := len(ip) * 8
 			result = append(result, &net.IPNet{
 				IP:   ip,
@@ -209,6 +281,21 @@ func AddressesAndRangesToIPNets(ranges []string) ([]*net.IPNet, error) {
 	return result, nil
 }
 
+// RightmostTrustedRangeStrategy creates a Strategy that returns the rightmost valid IP
+// address which is not in trustedRanges. The IP may contain a zone identifier.
+// trustedRanges can be private/internal or external (for example, if a third-party reverse proxy is used).
+// headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
+// those headers is quite different, so make sure you use the one appropriate to your
+// network configuration.)
+// If the IP is invalid, the Strategy returns an empty string.
+// This Strategy should be used when the IP ranges of the reverse proxies between the
+// internet and the server are known.
+// If a third-party WAF, CDN, etc., is used, you SHOULD use a method of verifying it that
+// is stronger than checking its IP address. Failure to do so can result in scenarios like:
+// You use AWS CloudFront in front of a server you host elsewhere. An attacker creates a
+// CF distribution that points at your origin server. The attacker uses Lambda@Edge to
+// spoof the Host and X-Forwarded-For headers. Now your "trusted" reverse proxy is no
+// longer trustworthy.
 func RightmostTrustedRangeStrategy(headerName string, trustedRanges []*net.IPNet) (Strategy, error) {
 	if headerName == "" {
 		return nil, fmt.Errorf("RightmostTrustedRangeStrategy header must not be empty")
@@ -222,68 +309,94 @@ func RightmostTrustedRangeStrategy(headerName string, trustedRanges []*net.IPNet
 	}
 
 	strat := func(headers http.Header, _ string) string {
-		ips := getIPList(headers, canonicalHeaderKey)
+		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
 	ipLoop:
-		for i := len(ips) - 1; i >= 0; i-- {
+		// Look backwards through the list of IP addresses
+		for i := len(ipAddrs) - 1; i >= 0; i-- {
 			for _, rng := range trustedRanges {
-				if ips[i] != nil && rng.Contains(ips[i]) {
+				if ipAddrs[i] != nil && rng.Contains(ipAddrs[i].IP) {
+					// This IP is trusted
 					continue ipLoop
 				}
 			}
 
-			if ips[i] == nil {
+			// At this point we have found the first-from-the-rightmost untrusted IP
+
+			if ipAddrs[i] == nil {
 				return ""
 			}
 
-			return ips[i].String()
+			return ipAddrs[i].String()
 		}
 
-		// We failed to find any valid, non-private IP
+		// Either there are no addresses or they are all in our trusted ranges
 		return ""
 	}
 
 	return strat, nil
 }
 
-// getIPList creates a single list of all of the X-Forwarded-For or Forwarded header
-// values, in order. Any invalid IPs will result in nil elements.
-func getIPList(headers http.Header, headerName string) []net.IP {
-	var result []net.IP
+// lastHeader returns the last header with the given name. It returns empty string if the
+// header is not found or if the header has an empty value. No validation is done on the
+// IP string. headerName must already be canonicalized.
+// This should be used with single-IP headers, like X-Real-IP. Per RFC 2616, they should
+// not have multiple headers, but if they do we can hope we're getting the newest/best by
+// taking the last instance.
+// This MUST NOT be used with list headers, like X-Forwarded-For and Forwarded.
+func lastHeader(headers http.Header, headerName string) string {
+	// Note that Go's Header map uses canonicalized keys
+	matches, ok := headers[headerName]
+	if !ok || len(matches) == 0 {
+		// For our uses of this function, returning an empty string in this case is fine
+		return ""
+	}
+
+	return matches[len(matches)-1]
+}
+
+// getIPAddrList creates a single list of all of the X-Forwarded-For or Forwarded header
+// values, in order. Any invalid IPs will result in nil elements. headerName must already
+// be canonicalized.
+func getIPAddrList(headers http.Header, headerName string) []*net.IPAddr {
+	var result []*net.IPAddr
 
 	// There may be multiple XFF headers present. We need to iterate through them all,
 	// in order, and collect all of the IPs.
-	// Note that Go canonicalizes the header key, so the lookup is case-insensitive.
-	for _, h := range headers.Values(headerName) {
+	// Note that Go's Header map uses canonicalized keys.
+	for _, h := range headers[headerName] {
 		// We now have a string with comma-separated list items
 		for _, rawListItem := range strings.Split(h, ",") {
 			// The IPs are often comma-space separated, so we'll need to trim the string
 			rawListItem = strings.TrimSpace(rawListItem)
 
+			var ipAddr *net.IPAddr
 			// If this is the XFF header, rawListItem is just an IP;
 			// if it's the Forwarded header, then there's more parsing to do.
-			var ip net.IP
 			if headerName == forwardedHdr {
-				ip = parseForwardedListItem(rawListItem)
-			} else { // XFF
-				ip = net.ParseIP(rawListItem)
+				ipAddr = parseForwardedListItem(rawListItem)
+			} else { // == XFF
+				ipAddr = goodIPAddr(rawListItem)
 			}
 
-			// ip is nil if not valid
-			result = append(result, ip)
+			// ipAddr is nil if not valid
+			result = append(result, ipAddr)
 		}
 	}
 
 	// Possible performance improvements:
 	// Here we are parsing _all_ of the IPs in the XFF headers, but we don't need all of
 	// them. Instead, we could start from the left or the right (depending on strategy),
-	// parse as we go, and stop when we've come to the one we want.
+	// parse as we go, and stop when we've come to the one we want. But that would make
+	// the various strategies somewhat more complex.
 
 	return result
 }
 
-func parseForwardedListItem(fwd string) net.IP {
+// parseForwardedListItem parses a Forwarded header list item, and returns the "for" IP
+// address. Nil is returned if the "for" IP is absent or invalid.
+func parseForwardedListItem(fwd string) *net.IPAddr {
 	// The header list item can look like these kinds of thing:
-	//	For="[2001:db8:cafe::17]:4711"
+	//	For="[2001:db8:cafe::17%zone]:4711"
 	//	for=192.0.2.60;proto=http;by=203.0.113.43
 	//	for=192.0.2.43
 
@@ -295,21 +408,20 @@ func parseForwardedListItem(fwd string) net.IP {
 	for _, fp := range fwdParts {
 		fpSplit := strings.Split(fp, "=")
 		if len(fpSplit) != 2 {
+			// There are too many or too few equal signs in this part
 			continue
 		}
 
 		if strings.EqualFold(fpSplit[0], "for") {
+			// We found the "for=" part
 			forPart = fpSplit[1]
 			break
 		}
 	}
 
+	// There shouldn't (per RFC 7239) be spaces around the semicolon or equal sign. It might
+	// be more correct to consider spaces an error, but we'll tolerate and trim them.
 	forPart = strings.TrimSpace(forPart)
-
-	if forPart == "" {
-		// We failed to find a "for=" part
-		return nil
-	}
 
 	// Get rid of any quotes, such as surrounding IPv6 addresses.
 	// Note that doing this without checking if the quotes are present means that we are
@@ -319,31 +431,90 @@ func parseForwardedListItem(fwd string) net.IP {
 	// It also means that we will accept IPv4 addresses with quotes, which _is_ correct.
 	forPart = strings.Trim(forPart, `"`)
 
-	// Attempt to split host:port, although it might not actually have a port
-	if host, _, err := net.SplitHostPort(forPart); err == nil {
-		forPart = host
+	if forPart == "" {
+		// We failed to find a "for=" part
+		return nil
 	}
 
-	// We should have only an IP now (not necessarily valid, may return nil)
-	return net.ParseIP(forPart)
-}
-
-// lastHeader returns the last header with the given name. It returns empty string if the
-// header is not found or if the header has an empty value.
-// The name must already be canonicalized.
-// This should be used with single-IP headers, like X-Real-IP. Per RFC 2616, they should
-// not have multiple headers, but if they do we can hope we're getting the newest/best by
-// taking the last instance.
-func lastHeader(headers http.Header, headerName string) string {
-	matches, ok := headers[headerName]
-	if !ok || len(matches) == 0 {
-		// For our uses of this function, returning an empty string in this case is fine
-		return ""
+	ipAddr := goodIPAddr(forPart)
+	if ipAddr == nil {
+		// The IP extracted from the "for=" part isn't valid
+		return nil
 	}
 
-	return matches[len(matches)-1]
+	return ipAddr
 }
 
+// isPrivateOrLocal return true if the given IP address is generally in the private
+// address space.
 func isPrivateOrLocal(ip net.IP) bool {
-	return ip.IsPrivate() || ip.IsLoopback()
+	return ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast()
+}
+
+// ParseIPAddr parses the given string into a net.IPAddr, which is a useful type for
+// dealing with IPs have zones. The Go stdlib net package is lacking such a function.
+// This will also discard any port number from the input.
+func ParseIPAddr(ipStr string) (net.IPAddr, error) {
+	host, _, err := net.SplitHostPort(ipStr)
+	if err == nil {
+		ipStr = host
+	}
+	// We continue even if net.SplitHostPort returned an error. This is because it may
+	// complain that there are "too many colons" in an IPv6 address that has no brackets
+	// and no port. net.ParseIP will be the final arbiter of validity.
+
+	ipStr, zone := SplitHostZone(ipStr)
+
+	res := net.IPAddr{
+		IP:   net.ParseIP(ipStr),
+		Zone: zone,
+	}
+
+	if res.IP == nil {
+		return net.IPAddr{}, fmt.Errorf("net.ParseIP failed")
+	}
+
+	return res, nil
+}
+
+// MustParseIPAddr panicks if ParseIPAddr fails.
+func MustParseIPAddr(ipStr string) net.IPAddr {
+	ipAddr, err := ParseIPAddr(ipStr)
+	if err != nil {
+		panic(fmt.Sprintf("ParseIPAddr failed: %v", err))
+	}
+	return ipAddr
+}
+
+// goodIPAddr wraps ParseIPAddr and adds a check for unspecified (like "::") and zero-value
+// addresses (like "0.0.0.0"). These are nominally valid IPs (net.ParseIP will accept them),
+// but they are undesirable for the purposes of this library.
+// Note that this function should be the only use of ParseIPAddr in this library.
+func goodIPAddr(ipStr string) *net.IPAddr {
+	ipAddr, err := ParseIPAddr(ipStr)
+	if err != nil {
+		return nil
+	}
+
+	if ipAddr.IP.IsUnspecified() {
+		return nil
+	}
+
+	return &ipAddr
+}
+
+// SplitHostZone splits a "host%zone" string into its components. If there is no zone,
+// host is the original input and zone is empty.
+func SplitHostZone(s string) (host, zone string) {
+	// This is copied from an unexported function in the Go stdlib:
+	// https://github.com/golang/go/blob/5c9b6e8e63e012513b1cb1a4a08ff23dec4137a1/src/net/ipsock.go#L219-L228
+
+	// The IPv6 scoped addressing zone identifier starts after the last percent sign.
+	if i := strings.LastIndexByte(s, '%'); i > 0 {
+		host, zone = s[:i], s[i+1:]
+	} else {
+		host = s
+	}
+	return
 }
