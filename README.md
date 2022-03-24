@@ -1,8 +1,3 @@
-<h1 style="color:red">IN PROGRESS; DO NOT USE YET</h1>
-
-* update single-IP headers info: https://github.com/realclientip/realclientip-go/wiki/Single-IP-Headers
-
-
 [![GoDoc](https://godoc.org/github.com/realclientip/realclientip-go?status.svg)](http://godoc.org/github.com/realclientip/realclientip-go)
 ![coverage](https://img.shields.io/badge/coverage-100%25-success?style=flat)
 ![license](https://img.shields.io/badge/license-Unlicense-important.svg?style=flat)
@@ -13,7 +8,8 @@
 
 This library is written in Go, but the hope is that it will be reimplemented in other languages. Please open an issue if you would like to create such an implementation.
 
-This library is freely licensed. You may use it as a dependency or copy it or modify it or anything else you want.
+
+This library is freely licensed. You may use it as a dependency or copy it or modify it or anything else you want. It has no dependencies, is written in pure Go, and supports Go versions as far back as 1.13.
 
 ## Usage
 
@@ -111,3 +107,9 @@ But perhaps that's no less awkward.
 ## Other language implementations
 
 If you want to reproduce this implementation in another language, please create an issue and we'll make a repo under this organization for you to use.
+
+## To-Do
+
+* Wiki: 
+  - update single-IP headers info: https://github.com/realclientip/realclientip-go/wiki/Single-IP-Headers
+  - create initial page linking to that

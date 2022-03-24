@@ -242,8 +242,8 @@ func RightmostTrustedCountStrategy(headerName string, trustedCount int) (Strateg
 //	- netip.ParsePrefix will succeed but silently throw away the zone;
 //	  then netip.Prefix.Contains will return false for any IP with a zone,
 //	  causing confusion and bugs
-func AddressesAndRangesToIPNets(ranges ...string) ([]*net.IPNet, error) {
-	var result []*net.IPNet
+func AddressesAndRangesToIPNets(ranges ...string) ([]net.IPNet, error) {
+	var result []net.IPNet
 	for _, r := range ranges {
 		if strings.Contains(r, "%") {
 			return nil, fmt.Errorf("zones are not allowed: %q", r)
@@ -255,7 +255,7 @@ func AddressesAndRangesToIPNets(ranges ...string) ([]*net.IPNet, error) {
 			if err != nil {
 				return nil, fmt.Errorf("net.ParseCIDR failed for %q: %w", r, err)
 			}
-			result = append(result, ipNet)
+			result = append(result, *ipNet)
 		} else {
 			// This is a single IP; convert it to a range including only itself
 			ip := net.ParseIP(r)
@@ -271,7 +271,7 @@ func AddressesAndRangesToIPNets(ranges ...string) ([]*net.IPNet, error) {
 
 			// Mask all the bits
 			mask := len(ip) * 8
-			result = append(result, &net.IPNet{
+			result = append(result, net.IPNet{
 				IP:   ip,
 				Mask: net.CIDRMask(mask, mask),
 			})
@@ -296,7 +296,7 @@ func AddressesAndRangesToIPNets(ranges ...string) ([]*net.IPNet, error) {
 // CF distribution that points at your origin server. The attacker uses Lambda@Edge to
 // spoof the Host and X-Forwarded-For headers. Now your "trusted" reverse proxy is no
 // longer trustworthy.
-func RightmostTrustedRangeStrategy(headerName string, trustedRanges []*net.IPNet) (Strategy, error) {
+func RightmostTrustedRangeStrategy(headerName string, trustedRanges []net.IPNet) (Strategy, error) {
 	if headerName == "" {
 		return nil, fmt.Errorf("RightmostTrustedRangeStrategy header must not be empty")
 	}
@@ -310,14 +310,11 @@ func RightmostTrustedRangeStrategy(headerName string, trustedRanges []*net.IPNet
 
 	strat := func(headers http.Header, _ string) string {
 		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
-	ipLoop:
 		// Look backwards through the list of IP addresses
 		for i := len(ipAddrs) - 1; i >= 0; i-- {
-			for _, rng := range trustedRanges {
-				if ipAddrs[i] != nil && rng.Contains(ipAddrs[i].IP) {
-					// This IP is trusted
-					continue ipLoop
-				}
+			if ipAddrs[i] != nil && isIPContainedInRanges(ipAddrs[i].IP, trustedRanges) {
+				// This IP is trusted
+				continue
 			}
 
 			// At this point we have found the first-from-the-rightmost untrusted IP
@@ -445,13 +442,6 @@ func parseForwardedListItem(fwd string) *net.IPAddr {
 	return ipAddr
 }
 
-// isPrivateOrLocal return true if the given IP address is generally in the private
-// address space.
-func isPrivateOrLocal(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast()
-}
-
 // ParseIPAddr parses the given string into a net.IPAddr, which is a useful type for
 // dealing with IPs have zones. The Go stdlib net package is lacking such a function.
 // This will also discard any port number from the input.
@@ -478,7 +468,7 @@ func ParseIPAddr(ipStr string) (net.IPAddr, error) {
 	return res, nil
 }
 
-// MustParseIPAddr panicks if ParseIPAddr fails.
+// MustParseIPAddr panics if ParseIPAddr fails.
 func MustParseIPAddr(ipStr string) net.IPAddr {
 	ipAddr, err := ParseIPAddr(ipStr)
 	if err != nil {
@@ -517,4 +507,62 @@ func SplitHostZone(s string) (host, zone string) {
 		host = s
 	}
 	return
+}
+
+// mustParseCIDR panics if net.ParseCIDR fails
+func mustParseCIDR(s string) net.IPNet {
+	_, ipNet, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return *ipNet
+}
+
+// privateAndLocalRanges net.IPNets that are loopback, private, link local, default unicast.
+// Based on https://github.com/wader/filtertransport/blob/bdd9e61eee7804e94ceb927c896b59920345c6e4/filter.go#L36-L64
+// which is based on https://github.com/letsencrypt/boulder/blob/master/bdns/dns.go
+var privateAndLocalRanges = []net.IPNet{
+	mustParseCIDR("10.0.0.0/8"),         // RFC1918
+	mustParseCIDR("172.16.0.0/12"),      // private
+	mustParseCIDR("192.168.0.0/16"),     // private
+	mustParseCIDR("127.0.0.0/8"),        // RFC5735
+	mustParseCIDR("0.0.0.0/8"),          // RFC1122 Section 3.2.1.3
+	mustParseCIDR("169.254.0.0/16"),     // RFC3927
+	mustParseCIDR("192.0.0.0/24"),       // RFC 5736
+	mustParseCIDR("192.0.2.0/24"),       // RFC 5737
+	mustParseCIDR("198.51.100.0/24"),    // Assigned as TEST-NET-2
+	mustParseCIDR("203.0.113.0/24"),     // Assigned as TEST-NET-3
+	mustParseCIDR("192.88.99.0/24"),     // RFC 3068
+	mustParseCIDR("192.18.0.0/15"),      // RFC 2544
+	mustParseCIDR("224.0.0.0/4"),        // RFC 3171
+	mustParseCIDR("240.0.0.0/4"),        // RFC 1112
+	mustParseCIDR("255.255.255.255/32"), // RFC 919 Section 7
+	mustParseCIDR("100.64.0.0/10"),      // RFC 6598
+	mustParseCIDR("::/128"),             // RFC 4291: Unspecified Address
+	mustParseCIDR("::1/128"),            // RFC 4291: Loopback Address
+	mustParseCIDR("100::/64"),           // RFC 6666: Discard Address Block
+	mustParseCIDR("2001::/23"),          // RFC 2928: IETF Protocol Assignments
+	mustParseCIDR("2001:2::/48"),        // RFC 5180: Benchmarking
+	mustParseCIDR("2001:db8::/32"),      // RFC 3849: Documentation
+	mustParseCIDR("2001::/32"),          // RFC 4380: TEREDO
+	mustParseCIDR("fc00::/7"),           // RFC 4193: Unique-Local
+	mustParseCIDR("fe80::/10"),          // RFC 4291: Section 2.5.6 Link-Scoped Unicast
+	mustParseCIDR("ff00::/8"),           // RFC 4291: Section 2.7
+	mustParseCIDR("2002::/16"),          // RFC 7526: 6to4 anycast prefix deprecated
+}
+
+// isIPContainedInRanges returns true if the given IP is contained in at least one of the given ranges
+func isIPContainedInRanges(ip net.IP, ranges []net.IPNet) bool {
+	for _, r := range ranges {
+		if r.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPrivateOrLocal return true if the given IP address is private, local, or otherwise
+// not suitable for an external client IP.
+func isPrivateOrLocal(ip net.IP) bool {
+	return isIPContainedInRanges(ip, privateAndLocalRanges)
 }

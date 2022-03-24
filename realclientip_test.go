@@ -20,10 +20,10 @@ IP types and formats to test:
 	192.0.2.60:4833
 
 	IPv6 with no port
-	2001:db8:cafe::17
+	2607:f8b0:4004:83f::200e
 
 	IPv6 with port
-	[2001:db8:cafe::17]:4711
+	[2607:f8b0:4004:83f::200e]:4711
 
 	IPv6 with zone and no port
 	fe80::abcd%zone
@@ -72,20 +72,20 @@ func Test_parseForwardedListItem(t *testing.T) {
 		{
 			// This is the correct form for IPv6 wit port
 			name: "IPv6 with port and quotes",
-			fwd:  `For="[2001:db8:cafe::17]:4711"`,
-			want: mustParseIPAddrPtr("2001:db8:cafe::17"),
+			fwd:  `For="[2607:f8b0:4004:83f::200e]:4711"`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
 		},
 		{
 			// This is the correct form for IP with no port
 			name: "IPv6 with quotes, no brackets, and no port",
-			fwd:  `for="2001:db8:cafe::17"`,
-			want: mustParseIPAddrPtr("2001:db8:cafe::17"),
+			fwd:  `for="2607:f8b0:4004:83f::200e"`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
 		},
 		{
 			// This is not strictly correct, but it will succeed as we don't check for quotes
 			name: "IPv6 with port and no quotes",
-			fwd:  `For=[2001:db8:cafe::17]:4711`,
-			want: mustParseIPAddrPtr("2001:db8:cafe::17"),
+			fwd:  `For=[2607:f8b0:4004:83f::200e]:4711`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
 		},
 		{
 			name: "IPv6 with port, quotes, and zone",
@@ -99,12 +99,12 @@ func Test_parseForwardedListItem(t *testing.T) {
 		},
 		{
 			name: "Error: IPv6 with quotes, brackets and no port",
-			fwd:  `fOR="[2001:db8:cafe::17]"`,
+			fwd:  `fOR="[2607:f8b0:4004:83f::200e]"`,
 			want: nil,
 		},
 		{
 			name: "Error: IPv6 with brackets, no quotes, and no port",
-			fwd:  `FOR=[2001:db8:cafe::17]`,
+			fwd:  `FOR=[2607:f8b0:4004:83f::200e]`,
 			want: nil,
 		},
 		{
@@ -134,7 +134,7 @@ func Test_parseForwardedListItem(t *testing.T) {
 		},
 		{
 			name: "Error: invalid IPv6",
-			fwd:  `for="2001:db8:cafe::999999"`,
+			fwd:  `for="2607:f8b0:4004:83f::999999"`,
 			want: nil,
 		},
 		{
@@ -238,16 +238,16 @@ func TestRemoteAddrStrategy(t *testing.T) {
 		{
 			name: "IPv6 with port",
 			args: args{
-				remoteAddr: "[2001:db8:cafe::18]:3838",
+				remoteAddr: "[2607:f8b0:4004:83f::18]:3838",
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "IPv6 with no port",
 			args: args{
-				remoteAddr: "2001:db8:cafe::18",
+				remoteAddr: "2607:f8b0:4004:83f::18",
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "IPv6 with zone and no port",
@@ -397,29 +397,29 @@ func TestSingleIPHeaderStrategy(t *testing.T) {
 			args: args{
 				headerName: "X-Real-IP",
 				headers: http.Header{
-					"X-Real-Ip":       []string{"[2001:db8:cafe::18]:3838"},
+					"X-Real-Ip":       []string{"[2607:f8b0:4004:83f::18]:3838"},
 					"True-Client-Ip":  []string{"2.2.2.2:49489"},
 					"X-Forwarded-For": []string{"3.3.3.3"}},
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "IPv6 with no port",
 			args: args{
 				headerName: "X-Real-IP",
 				headers: http.Header{
-					"X-Real-Ip":       []string{"2001:db8:cafe::19"},
+					"X-Real-Ip":       []string{"2607:f8b0:4004:83f::19"},
 					"True-Client-Ip":  []string{"2.2.2.2:49489"},
 					"X-Forwarded-For": []string{"3.3.3.3"}},
 			},
-			want: "2001:db8:cafe::19",
+			want: "2607:f8b0:4004:83f::19",
 		},
 		{
 			name: "IPv6 with zone and no port",
 			args: args{
 				headerName: "a-b-c-d",
 				headers: http.Header{
-					"X-Real-Ip":       []string{"2001:db8:cafe::19"},
+					"X-Real-Ip":       []string{"2607:f8b0:4004:83f::19"},
 					"A-B-C-D":         []string{"fe80::1111%zone"},
 					"X-Forwarded-For": []string{"3.3.3.3"}},
 			},
@@ -430,7 +430,7 @@ func TestSingleIPHeaderStrategy(t *testing.T) {
 			args: args{
 				headerName: "a-b-c-d",
 				headers: http.Header{
-					"X-Real-Ip":       []string{"2001:db8:cafe::19"},
+					"X-Real-Ip":       []string{"2607:f8b0:4004:83f::19"},
 					"A-B-C-D":         []string{"[fe80::1111%zone]:4848"},
 					"X-Forwarded-For": []string{"3.3.3.3"}},
 			},
@@ -441,11 +441,11 @@ func TestSingleIPHeaderStrategy(t *testing.T) {
 			args: args{
 				headerName: "x-real-ip",
 				headers: http.Header{
-					"X-Real-Ip":       []string{"2001:db8:cafe::19"},
+					"X-Real-Ip":       []string{"2607:f8b0:4004:83f::19"},
 					"A-B-C-D":         []string{"[fe80::1111%zone]:4848"},
 					"X-Forwarded-For": []string{"3.3.3.3"}},
 			},
-			want: "2001:db8:cafe::19",
+			want: "2607:f8b0:4004:83f::19",
 		},
 		{
 			name: "IP-mapped IPv6",
@@ -608,10 +608,10 @@ func TestLeftmostNonPrivateStrategy(t *testing.T) {
 				headerName: "X-Forwarded-For",
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
-					"X-Forwarded-For": []string{`[2001:db8:cafe::18]:3838, 3.3.3.3`, `4.4.4.4`},
+					"X-Forwarded-For": []string{`[2607:f8b0:4004:83f::18]:3838, 3.3.3.3`, `4.4.4.4`},
 				},
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "IPv6 with no port",
@@ -620,10 +620,10 @@ func TestLeftmostNonPrivateStrategy(t *testing.T) {
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
-					"Forwarded":       []string{`Host=blah;For="2001:db8:cafe::18";Proto=https`},
+					"Forwarded":       []string{`Host=blah;For="2607:f8b0:4004:83f::18";Proto=https`},
 				},
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "IPv6 with port and zone",
@@ -632,10 +632,10 @@ func TestLeftmostNonPrivateStrategy(t *testing.T) {
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
-					"Forwarded":       []string{`For=[fe80::1111%zone], Host=blah;For="[2001:db8:cafe::18%zone]:9943";Proto=https`, `host=what;for=6.6.6.6;proto=https`},
+					"Forwarded":       []string{`For=[fe80::1111%zone], Host=blah;For="[2607:f8b0:4004:83f::18%zone]:9943";Proto=https`, `host=what;for=6.6.6.6;proto=https`},
 				},
 			},
-			want: "2001:db8:cafe::18%zone",
+			want: "2607:f8b0:4004:83f::18%zone",
 		},
 		{
 			name: "IPv6 with port and zone, no quotes",
@@ -644,10 +644,10 @@ func TestLeftmostNonPrivateStrategy(t *testing.T) {
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
-					"Forwarded":       []string{`For=[fe80::1111%zone], Host=blah;For=[2001:db8:cafe::18%zone]:9943;Proto=https`, `host=what;for=6.6.6.6;proto=https`},
+					"Forwarded":       []string{`For=[fe80::1111%zone], Host=blah;For=[2607:f8b0:4004:83f::18%zone]:9943;Proto=https`, `host=what;for=6.6.6.6;proto=https`},
 				},
 			},
-			want: "2001:db8:cafe::18%zone",
+			want: "2607:f8b0:4004:83f::18%zone",
 		},
 		{
 			name: "IPv4-mapped IPv6",
@@ -716,10 +716,10 @@ func TestLeftmostNonPrivateStrategy(t *testing.T) {
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`::1, nope`, `4.4.4.4, 5.5.5.5`},
-					"Forwarded":       []string{`For="", For="::ffff:192.168.1.1"`, `host=what;for=:48485;proto=https,For="2001:db8:cafe::18"`},
+					"Forwarded":       []string{`For="", For="::ffff:192.168.1.1"`, `host=what;for=:48485;proto=https,For="2607:f8b0:4004:83f::18"`},
 				},
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "Fail: XFF: none acceptable",
@@ -852,10 +852,10 @@ func TestRightmostNonPrivateStrategy(t *testing.T) {
 				headerName: "X-Forwarded-For",
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
-					"X-Forwarded-For": []string{`[2001:db8:cafe::18]:3838`},
+					"X-Forwarded-For": []string{`[2607:f8b0:4004:83f::18]:3838`},
 				},
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "IPv6 with no port",
@@ -864,10 +864,10 @@ func TestRightmostNonPrivateStrategy(t *testing.T) {
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
-					"Forwarded":       []string{`host=what;for=6.6.6.6;proto=https`, `Host=blah;For="2001:db8:cafe::18";Proto=https`},
+					"Forwarded":       []string{`host=what;for=6.6.6.6;proto=https`, `Host=blah;For="2607:f8b0:4004:83f::18";Proto=https`},
 				},
 			},
-			want: "2001:db8:cafe::18",
+			want: "2607:f8b0:4004:83f::18",
 		},
 		{
 			name: "IPv6 with port and zone",
@@ -876,10 +876,10 @@ func TestRightmostNonPrivateStrategy(t *testing.T) {
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
-					"Forwarded":       []string{`host=what;for=6.6.6.6;proto=https`, `For="[2001:db8:cafe::18%eth0]:3393";Proto=https`, `Host=blah;For="[fe80::1111%zone]:9943";Proto=https`},
+					"Forwarded":       []string{`host=what;for=6.6.6.6;proto=https`, `For="[2607:f8b0:4004:83f::18%eth0]:3393";Proto=https`, `Host=blah;For="[fe80::1111%zone]:9943";Proto=https`},
 				},
 			},
-			want: "2001:db8:cafe::18%eth0",
+			want: "2607:f8b0:4004:83f::18%eth0",
 		},
 		{
 			name: "IPv6 with port and zone, no quotes",
@@ -888,10 +888,10 @@ func TestRightmostNonPrivateStrategy(t *testing.T) {
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
-					"Forwarded":       []string{`host=what;for=6.6.6.6;proto=https`, `For="[2001:db8:cafe::18%eth0]:3393";Proto=https`, `Host=blah;For=[fe80::1111%zone]:9943;Proto=https`},
+					"Forwarded":       []string{`host=what;for=6.6.6.6;proto=https`, `For="[2607:f8b0:4004:83f::18%eth0]:3393";Proto=https`, `Host=blah;For=[fe80::1111%zone]:9943;Proto=https`},
 				},
 			},
-			want: "2001:db8:cafe::18%eth0",
+			want: "2607:f8b0:4004:83f::18%eth0",
 		},
 		{
 			name: "IPv4-mapped IPv6",
@@ -1238,8 +1238,8 @@ func TestAddressesAndRangesToIPNets(t *testing.T) {
 		},
 		{
 			name:   "Single IPv6 address",
-			ranges: []string{"2001:db8:cafe::17"},
-			want:   []string{"2001:db8:cafe::17/128"},
+			ranges: []string{"2607:f8b0:4004:83f::200e"},
+			want:   []string{"2607:f8b0:4004:83f::200e/128"},
 		},
 		{
 			name:   "Single IPv4 range",
@@ -1248,22 +1248,22 @@ func TestAddressesAndRangesToIPNets(t *testing.T) {
 		},
 		{
 			name:   "Single IPv6 range",
-			ranges: []string{"2001:db8:cafe::17/48"},
-			want:   []string{"2001:db8:cafe::/48"},
+			ranges: []string{"2607:f8b0:4004:83f::200e/48"},
+			want:   []string{"2607:f8b0:4004::/48"},
 		},
 		{
 			name: "Mixed input",
 			ranges: []string{
-				"1.1.1.1", "2001:db8:cafe::17",
-				"1.1.1.1/32", "2001:db8:cafe::17/128",
-				"1.1.1.1/16", "2001:db8:cafe::17/48",
+				"1.1.1.1", "2607:f8b0:4004:83f::200e",
+				"1.1.1.1/32", "2607:f8b0:4004:83f::200e/128",
+				"1.1.1.1/16", "2607:f8b0:4004:83f::200e/56",
 				"::ffff:188.0.2.128/112", "::ffff:bc15:0006/104",
 				"64:ff9b::188.0.2.128/112",
 			},
 			want: []string{
-				"1.1.1.1/32", "2001:db8:cafe::17/128",
-				"1.1.1.1/32", "2001:db8:cafe::17/128",
-				"1.1.0.0/16", "2001:db8:cafe::/48",
+				"1.1.1.1/32", "2607:f8b0:4004:83f::200e/128",
+				"1.1.1.1/32", "2607:f8b0:4004:83f::200e/128",
+				"1.1.0.0/16", "2607:f8b0:4004:800::/56",
 				"188.0.0.0/16", "188.0.0.0/8",
 				"64:ff9b::bc00:0/112",
 			},
@@ -1275,7 +1275,7 @@ func TestAddressesAndRangesToIPNets(t *testing.T) {
 		},
 		{
 			name:    "Error: garbage CIDR",
-			ranges:  []string{"2001:db8:cafe::17/nope"},
+			ranges:  []string{"2607:f8b0:4004:83f::200e/nope"},
 			wantErr: true,
 		},
 		{
@@ -1377,12 +1377,12 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
 					"Forwarded": []string{
-						`For=99.99.99.99, For=4.4.4.8, For="[2001:db8:cafe::17]:4747"`,
+						`For=99.99.99.99, For=4.4.4.8, For="[2607:f8b0:4004:83f::200e]:4747"`,
 						`For=2.2.2.2:8883, For=64:ff9b::188.0.2.200, For=3.3.5.5, For=2001:db7::abcd`,
 					},
 				},
 				trustedRanges: []string{
-					`2.2.2.2/32`, `2001:db8:cafe::17/128`,
+					`2.2.2.2/32`, `2607:f8b0:4004:83f::200e/128`,
 					`3.3.0.0/16`, `2001:db7::/64`,
 					`::ffff:4.4.4.4/124`, `64:ff9b::188.0.2.128/112`,
 				},
@@ -1627,8 +1627,8 @@ func TestParseIPAddr(t *testing.T) {
 		},
 		{
 			name:  "With zone and port",
-			ipStr: "[2001:db8:cafe::17%zone]:4484",
-			want:  net.IPAddr{IP: net.ParseIP("2001:db8:cafe::17"), Zone: "zone"},
+			ipStr: "[2607:f8b0:4004:83f::200e%zone]:4484",
+			want:  net.IPAddr{IP: net.ParseIP("2607:f8b0:4004:83f::200e"), Zone: "zone"},
 		},
 		{
 			name:  "With port",
@@ -1700,8 +1700,8 @@ func Test_goodIPAddr(t *testing.T) {
 		},
 		{
 			name:  "With zone and port",
-			ipStr: "[2001:db8:cafe::17%zone]:4484",
-			want:  &net.IPAddr{IP: net.ParseIP("2001:db8:cafe::17"), Zone: "zone"},
+			ipStr: "[2607:f8b0:4004:83f::200e%zone]:4484",
+			want:  &net.IPAddr{IP: net.ParseIP("2607:f8b0:4004:83f::200e"), Zone: "zone"},
 		},
 		{
 			name:  "With port",
@@ -1815,4 +1815,15 @@ func Test_isPrivateOrLocal(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_mustParseCIDR(t *testing.T) {
+	// We test the non-panic path elsewhere, but we need to specifically check the panic case
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("mustParseCIDR() did not panic")
+		}
+	}()
+
+	mustParseCIDR("nope")
 }
