@@ -108,9 +108,3 @@ But perhaps that's no less awkward.
 ## Other language implementations
 
 If you want to reproduce this implementation in another language, please create an issue and we'll make a repo under this organization for you to use.
-
-## To-Do
-
-* Wiki: 
-  - update single-IP headers info: https://github.com/realclientip/realclientip-go/wiki/Single-IP-Headers
-  - create initial page linking to that
