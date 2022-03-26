@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
+
+	"github.com/realclientip/realclientip-go/ranges"
 )
 
 /*
@@ -1397,7 +1399,7 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`, `2400:cb00::1`},
 				},
-				trustedRanges: CloudflareIPRanges,
+				trustedRanges: ranges.Cloudflare,
 			},
 			want: "4.4.4.4",
 		},

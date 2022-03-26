@@ -1,10 +1,10 @@
-package realclientip
+package ranges
 
-// CloudflareIPRanges is Cloudflare's internet IP ranges.
-// It is taken from: https://www.cloudflare.com/ips/
-// To ensure up-to-date results, use the Cloudflare API to retrieve these at runtime:
-// https://api.cloudflare.com/#cloudflare-ips-properties
-var CloudflareIPRanges = []string{
+// Cloudflare is Cloudflare's internet IP ranges.
+// It is taken from: https://www.cloudflare.com/ips/.
+// As an alternative, and to ensure up-to-date results, use the Cloudflare API to retrieve
+// these ranges at runtime: https://api.cloudflare.com/#cloudflare-ips-properties
+var Cloudflare = []string{
 	"173.245.48.0/20",
 	"103.21.244.0/22",
 	"103.22.200.0/22",

@@ -50,7 +50,7 @@ To split the zone off and discard it, you may use `realclientip.SplitHostZone`.
 
 ### Known IP ranges
 
-There is a copy of [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) under `realclientip.CloudflareIPRanges`. This can be used with `realclientip.RightmostTrustedRangeStrategy`. We may add more known cloud provider ranges in the future. Contributions are welcome to add new providers or update existing ones.
+There is a copy of [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) under `ranges.Cloudflare`. This can be used with `realclientip.RightmostTrustedRangeStrategy`. We may add more known cloud provider ranges in the future. Contributions are welcome to add new providers or update existing ones.
 
 (It might be preferable to use [provider APIs](https://api.cloudflare.com/#cloudflare-ips-properties) to retrieve the ranges, as they are guaranteed to be up to date.)
 
