@@ -65,7 +65,7 @@ func RemoteAddrStrategy(_ http.Header, remoteAddr string) string {
 // header. The IP may contain a zone identifier.
 // If the IP is invalid, the Strategy returns an empty string.
 // A non-exhaustive list of such single-IP headers is:
-// X-Real-IP, CF-Connecting-IP, True-Client-IP, Fastly-Client-IP, X-Azure-ClientIP, X-Azure-SocketIP
+// X-Real-IP, CF-Connecting-IP, True-Client-IP, Fastly-Client-IP, X-Azure-ClientIP, X-Azure-SocketIP.
 // This Strategy should be used when the given header is added by a trusted reverse proxy.
 // You must ensure that this header is not spoofable (as is possible with Akamai's use of
 // True-Client-IP, Fastly's default use of Fastly-Client-IP, and Azure's X-Azure-ClientIP).
@@ -238,10 +238,9 @@ func RightmostTrustedCountStrategy(headerName string, trustedCount int) (Strateg
 // CIDR ranges (prefixes) to net.IPNet instances.
 // If net.ParseCIDR or net.ParseIP fail, an error will be returned.
 // Zones in addresses or ranges are not allowed and will result in an error. This is because:
-// 	- net.ParseCIDR will fail to parse a range with a zone
-//	- netip.ParsePrefix will succeed but silently throw away the zone;
-//	  then netip.Prefix.Contains will return false for any IP with a zone,
-//	  causing confusion and bugs
+// a) net.ParseCIDR will fail to parse a range with a zone, and
+// b) netip.ParsePrefix will succeed but silently throw away the zone; then
+// netip.Prefix.Contains will return false for any IP with a zone, causing confusion and bugs.
 func AddressesAndRangesToIPNets(ranges ...string) ([]net.IPNet, error) {
 	var result []net.IPNet
 	for _, r := range ranges {
