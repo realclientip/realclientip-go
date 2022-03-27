@@ -22,7 +22,7 @@ clientIPStrategy, err := realclientip.RightmostTrustedCountStrategy("X-Forwarded
 clientIP := clientIPStrategy(req.Header, req.RemoteAddr)
 ```
 
-Try it out [in the playground](https://go.dev/play/p/_NiOh3WF0-3).
+Try it out [in the playground](https://go.dev/play/p/Z0jNsEcOCnL).
 
 There are a number of different strategies available -- the right one will depend on your network configuration. See the [documentation](https://pkg.go.dev/github.com/realclientip/realclientip-go) to find out what's available and which you should use.
 
