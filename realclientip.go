@@ -361,6 +361,8 @@ func getIPAddrList(headers http.Header, headerName string) []*net.IPAddr {
 
 	// There may be multiple XFF headers present. We need to iterate through them all,
 	// in order, and collect all of the IPs.
+	// Note that we're not joining all of the headers into a single string and then
+	// splitting. Doing it that way would use more memory.
 	// Note that Go's Header map uses canonicalized keys.
 	for _, h := range headers[headerName] {
 		// We now have a string with comma-separated list items
@@ -396,7 +398,8 @@ func getIPAddrList(headers http.Header, headerName string) []*net.IPAddr {
 func parseForwardedListItem(fwd string) *net.IPAddr {
 	// The header list item can look like these kinds of thing:
 	//	For="[2001:db8:cafe::17%zone]:4711"
-	//	for=192.0.2.60;proto=http;by=203.0.113.43
+	//	For="[2001:db8:cafe::17%zone]"
+	//	for=192.0.2.60;proto=http; by=203.0.113.43
 	//	for=192.0.2.43
 
 	// First split up "for=", "by=", "host=", etc.
@@ -405,6 +408,9 @@ func parseForwardedListItem(fwd string) *net.IPAddr {
 	// Find the "for=" part, since that has the IP we want (maybe)
 	var forPart string
 	for _, fp := range fwdParts {
+		// Whitespace is allowed around the semicolons
+		fp = strings.TrimSpace(fp)
+
 		fpSplit := strings.Split(fp, "=")
 		if len(fpSplit) != 2 {
 			// There are too many or too few equal signs in this part
@@ -427,8 +433,8 @@ func parseForwardedListItem(fwd string) *net.IPAddr {
 	// effectively accepting IPv6 addresses that don't strictly conform to RFC 7239, which
 	// requires quotes. https://www.rfc-editor.org/rfc/rfc7239#section-4
 	// This behaviour is debatable.
-	// It also means that we will accept IPv4 addresses with quotes, which _is_ correct.
-	forPart = strings.Trim(forPart, `"`)
+	// It also means that we will accept IPv4 addresses with quotes, which is correct.
+	forPart = trimMatchedEnds(forPart, `"`)
 
 	if forPart == "" {
 		// We failed to find a "for=" part
@@ -455,6 +461,10 @@ func ParseIPAddr(ipStr string) (net.IPAddr, error) {
 	// We continue even if net.SplitHostPort returned an error. This is because it may
 	// complain that there are "too many colons" in an IPv6 address that has no brackets
 	// and no port. net.ParseIP will be the final arbiter of validity.
+
+	// Square brackets around IPv6 addresses may be used in the Forwarded header.
+	// net.ParseIP doesn't like them, so we'll trim them off.
+	ipStr = trimMatchedEnds(ipStr, "[]")
 
 	ipStr, zone := SplitHostZone(ipStr)
 
@@ -567,4 +577,36 @@ func isIPContainedInRanges(ip net.IP, ranges []net.IPNet) bool {
 // not suitable for an external client IP.
 func isPrivateOrLocal(ip net.IP) bool {
 	return isIPContainedInRanges(ip, privateAndLocalRanges)
+}
+
+// trimMatchedEnds trims s if and only if the first and last bytes in s are in chars.
+// If chars is a single character (like `"`), then the first and last bytes must match
+// that single character. If chars is two characters (like `[]`), the first byte in s
+// must match the first byte in chars, and the last bytes in s must match the last byte
+// in chars.
+// This helps us ensure that we only trim _matched_ quotes and brackets,
+// which strings.Trim doesn't provide.
+func trimMatchedEnds(s string, chars string) string {
+	if len(chars) != 1 && len(chars) != 2 {
+		panic("trimMatchedEnds chars must be length 1 or 2")
+	}
+
+	first, last := chars[0], chars[0]
+	if len(chars) > 1 {
+		last = chars[1]
+	}
+
+	if len(s) < 2 {
+		return s
+	}
+
+	if s[0] != first {
+		return s
+	}
+
+	if s[len(s)-1] != last {
+		return s
+	}
+
+	return s[1 : len(s)-1]
 }

@@ -79,12 +79,24 @@ func Test_parseForwardedListItem(t *testing.T) {
 		},
 		{
 			// This is the correct form for IP with no port
+			name: "IPv6 with quotes, brackets and no port",
+			fwd:  `fOR="[2607:f8b0:4004:83f::200e]"`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
+		},
+		{
+			// RFC deviation: missing brackets
 			name: "IPv6 with quotes, no brackets, and no port",
 			fwd:  `for="2607:f8b0:4004:83f::200e"`,
 			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
 		},
 		{
-			// This is not strictly correct, but it will succeed as we don't check for quotes
+			// RFC deviation: missing quotes
+			name: "IPv6 with brackets, no quotes, and no port",
+			fwd:  `FOR=[2607:f8b0:4004:83f::200e]`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
+		},
+		{
+			// RFC deviation: missing quotes
 			name: "IPv6 with port and no quotes",
 			fwd:  `For=[2607:f8b0:4004:83f::200e]:4711`,
 			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
@@ -95,21 +107,13 @@ func Test_parseForwardedListItem(t *testing.T) {
 			want: mustParseIPAddrPtr("fe80::abcd%zone"),
 		},
 		{
+			// RFC deviation: missing brackets
 			name: "IPv6 with zone, no quotes, no port",
 			fwd:  `For="fe80::abcd%zone"`,
 			want: mustParseIPAddrPtr("fe80::abcd%zone"),
 		},
 		{
-			name: "Error: IPv6 with quotes, brackets and no port",
-			fwd:  `fOR="[2607:f8b0:4004:83f::200e]"`,
-			want: nil,
-		},
-		{
-			name: "Error: IPv6 with brackets, no quotes, and no port",
-			fwd:  `FOR=[2607:f8b0:4004:83f::200e]`,
-			want: nil,
-		},
-		{
+			// RFC deviation: missing quotes
 			name: "IPv4 with port",
 			fwd:  `FoR=192.0.2.60:4711`,
 			want: mustParseIPAddrPtr("192.0.2.60"),
@@ -145,23 +149,30 @@ func Test_parseForwardedListItem(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "Error: empty IP value",
+			fwd:  `for=`,
+			want: nil,
+		},
+		{
 			name: "Multiple IPv4 directives",
-			fwd:  `by=1.1.1.1;for=2.2.2.2;host=myhost;proto=https`,
+			fwd:  `by=1.1.1.1; for=2.2.2.2;host=myhost; proto=https`,
 			want: mustParseIPAddrPtr("2.2.2.2"),
 		},
 		{
+			// RFC deviation: missing quotes around IPv6
 			name: "Multiple IPv6 directives",
 			fwd:  `by=1::1;host=myhost;for=2::2;proto=https`,
 			want: mustParseIPAddrPtr("2::2"),
 		},
 		{
+			// RFC deviation: missing quotes around IPv6
 			name: "Multiple mixed directives",
 			fwd:  `by=1::1;host=myhost;proto=https;for=2.2.2.2`,
 			want: mustParseIPAddrPtr("2.2.2.2"),
 		},
 		{
 			name: "IPv4-mapped IPv6",
-			fwd:  `for="::ffff:188.0.2.128"`,
+			fwd:  `for="[::ffff:188.0.2.128]"`,
 			want: mustParseIPAddrPtr("188.0.2.128"),
 		},
 		{
@@ -171,12 +182,12 @@ func Test_parseForwardedListItem(t *testing.T) {
 		},
 		{
 			name: "IPv4-mapped IPv6 in IPv6 form",
-			fwd:  `for="0:0:0:0:0:ffff:bc15:0006"`,
+			fwd:  `for="[0:0:0:0:0:ffff:bc15:0006]"`,
 			want: mustParseIPAddrPtr("188.21.0.6"),
 		},
 		{
 			name: "NAT64 IPv4-mapped IPv6",
-			fwd:  `for="64:ff9b::188.0.2.128"`,
+			fwd:  `for="[64:ff9b::188.0.2.128]"`,
 			want: mustParseIPAddrPtr("64:ff9b::188.0.2.128"),
 		},
 		{
@@ -186,13 +197,44 @@ func Test_parseForwardedListItem(t *testing.T) {
 		},
 		{
 			name: "IPv6 loopback",
-			fwd:  `for="::1"`,
+			fwd:  `for="[::1]"`,
 			want: mustParseIPAddrPtr("::1"),
+		},
+		{
+			// RFC deviation: quotes must be matched
+			name: "Error: Unmatched quote",
+			fwd:  `for="1.1.1.1`,
+			want: nil,
+		},
+		{
+			// RFC deviation: brackets must be matched
+			name: "Error: IPv6 loopback",
+			fwd:  `for="::1]"`,
+			want: nil,
+		},
+		{
+			name: "Error: misplaced quote",
+			fwd:  `for="[0:0:0:0:0:ffff:bc15:0006"]`,
+			want: nil,
 		},
 		{
 			name: "Error: garbage",
 			fwd:  "ads\x00jkl&#*(383fdljk",
 			want: nil,
+		},
+		{
+			// Per RFC 7230 section 3.2.6, this should not be an error, but we don't have
+			// full syntax support yet.
+			name: "RFC deviation: quoted pair",
+			fwd:  `for=1.1.1.\1`,
+			want: nil,
+		},
+		{
+			// Per RFC 7239, this extraneous whitespace should be an error, but we don't
+			// have full syntax support yet.
+			name: "RFC deviation: Incorrect whitespace",
+			fwd:  `for= 1.1.1.1`,
+			want: mustParseIPAddrPtr("1.1.1.1"),
 		},
 	}
 	for _, tt := range tests {
@@ -1835,4 +1877,147 @@ func Test_mustParseCIDR(t *testing.T) {
 	}()
 
 	mustParseCIDR("nope")
+}
+
+func Test_trimMatchedEnds(t *testing.T) {
+	// We test the non-panic paths elsewhere, but we need to specifically check the panic case
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("trimMatchedEnds() did not panic")
+		}
+	}()
+
+	trimMatchedEnds("nope", "abcd")
+}
+
+// Demonstrate parsing deviations from header syntax RFCs, particularly RFC 7239 (Forwarded header)
+// and RFC 7230 (HTTP/1.1 syntax) section 3.2.6.
+func Test_headerRFCDeviations(t *testing.T) {
+	mustParseIPAddrPtr := func(s string) *net.IPAddr {
+		res := MustParseIPAddr(s)
+		return &res
+	}
+
+	type args struct {
+		headers    http.Header
+		headerName string
+	}
+	tests := []struct {
+		name string
+		args args
+		want []*net.IPAddr
+	}{
+		{
+			// The value in quotes should be a single value but we split by comma, so it's not.
+			// The first and third "For=" bits have one double-quote in them, so they are
+			// considered invalid by our parser. The second is still in the quoted-string,
+			// but doesn't have any quotes in it, so it parses okay.
+			name: "Comma in quotes",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For="1.1.1.1, For=2.2.2.2, For=3.3.3.3", For="4.4.4.4"`}},
+				headerName: "Forwarded",
+			},
+			// There are really only two values, so we actually want: {nil, "4.4.4.4"}
+			want: []*net.IPAddr{nil, mustParseIPAddrPtr("2.2.2.2"), nil, mustParseIPAddrPtr("4.4.4.4")},
+		},
+		{
+			// Per 7239, the opening unmatched quote makes the whole rest of the header invalid.
+			// But that would mean that an attacker can invalidate the whole header with a
+			// quote character early on, even the trusted IPs added by our reverse proxies.
+			// Our actual behaviour is probably the best approach.
+			name: "Unmatched quote",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For="1.1.1.1, For=2.2.2.2`}},
+				headerName: "Forwarded",
+			},
+			// There are really only two values, so the RFC would require: {nil} (or empty slice?)
+			want: []*net.IPAddr{nil, mustParseIPAddrPtr("2.2.2.2")},
+		},
+		{
+			// The invalid non-For parameter should invalidate the whole item, but we're
+			// not checking anything but the "For=" part.
+			name: "Invalid characters",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For=1.1.1.1;@!=😀, For=2.2.2.2`}},
+				headerName: "Forwarded",
+			},
+			// Only the last value is valid, so it should be: {nil, "2.2.2.2"}
+			want: []*net.IPAddr{mustParseIPAddrPtr("1.1.1.1"), mustParseIPAddrPtr("2.2.2.2")},
+		},
+		{
+			// The duplicate "For=" parameter should invalidate the whole item but we don't check for it
+			name: "Duplicate token",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For=1.1.1.1;For=2.2.2.2, For=3.3.3.3`}},
+				headerName: "Forwarded",
+			},
+			// Only the last value is valid, so it should be: {nil, "3.3.3.3"}
+			want: []*net.IPAddr{mustParseIPAddrPtr("1.1.1.1"), mustParseIPAddrPtr("3.3.3.3")},
+		},
+		{
+			// An escaped character in quotes should be unescaped, but we're not doing it.
+			// (And if we do end up doing it, make sure that `\\` becomes `\` after escaping.
+			// And escaping is only allowed in quoted strings.)
+			// There is no good reason for any part of an IP address to be escaped anyway.
+			name: "Escaped character",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For="3.3.3.\3"`}},
+				headerName: "Forwarded",
+			},
+			// The value is valid, so it should be: {nil, "3.3.3.3"}
+			want: []*net.IPAddr{nil},
+		},
+		{
+			// Spaces are not allowed around the equal signs, but due to the way we parse
+			// a space after the equal will pass but one before won't.
+			name: "Equal sign spaces",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For =1.1.1.1, For= 3.3.3.3`}},
+				headerName: "Forwarded",
+			},
+			// Neither value is valid, so it should be: {nil, nil}
+			want: []*net.IPAddr{nil, mustParseIPAddrPtr("3.3.3.3")},
+		},
+		{
+			// Disallowed characters are only allowed in quoted strings. This means
+			// that IPv6 addresses must be quoted.
+			name: "Disallowed characters in unquoted value (like colons and square brackets",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For=[2607:f8b0:4004:83f::200e]`}},
+				headerName: "Forwarded",
+			},
+			// Value is invalid without quotes, so should be {nil}
+			want: []*net.IPAddr{mustParseIPAddrPtr("2607:f8b0:4004:83f::200e")},
+		},
+		{
+			// IPv6 addresses are required to be contained in square brackets. We don't
+			// require this simply to be more flexible in what is accepted.
+			name: "IPv6 brackets",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For="2607:f8b0:4004:83f::200e"`}},
+				headerName: "Forwarded",
+			},
+			// IPv6 is invalid without brackets, so should be {nil}
+			want: []*net.IPAddr{mustParseIPAddrPtr("2607:f8b0:4004:83f::200e")},
+		},
+		{
+			// IPv4 addresses are _not_ supposed to be in square brackets, but we trim
+			// them unconditionally.
+			name: "IPv4 brackets",
+			args: args{
+				headers:    http.Header{"Forwarded": []string{`For="[1.1.1.1]"`}},
+				headerName: "Forwarded",
+			},
+			// IPv4 is invalid with brackets, so should be {nil}
+			want: []*net.IPAddr{mustParseIPAddrPtr("1.1.1.1")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getIPAddrList(tt.args.headers, tt.args.headerName); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("getIPAddrList() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
