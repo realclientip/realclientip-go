@@ -1,5 +1,6 @@
 // SPDX: Unlicense
 
+// Package realclientip provides strategies for obtaining the "real" client IP from HTTP requests.
 package realclientip
 
 import (
