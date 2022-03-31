@@ -1890,9 +1890,9 @@ func Test_trimMatchedEnds(t *testing.T) {
 	trimMatchedEnds("nope", "abcd")
 }
 
-// Demonstrate parsing deviations from header syntax RFCs, particularly RFC 7239 (Forwarded header)
-// and RFC 7230 (HTTP/1.1 syntax) section 3.2.6.
-func Test_headerRFCDeviations(t *testing.T) {
+// Demonstrate parsing deviations from Forwarded header syntax RFCs, particularly
+// RFC 7239 (Forwarded header) and RFC 7230 (HTTP/1.1 syntax) section 3.2.6.
+func Test_forwardedHeaderRFCDeviations(t *testing.T) {
 	mustParseIPAddrPtr := func(s string) *net.IPAddr {
 		res := MustParseIPAddr(s)
 		return &res
