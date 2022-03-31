@@ -14,7 +14,7 @@ This library is freely licensed. You may use it as a dependency or copy it or mo
 
 ## Usage
 
-This library provides strategies for extracting the desired "real" client IP from various headers or from `http.Request.RemoteAddr` (the client socket IP). 
+This library provides strategies for extracting the desired "real" client IP from various headers or from `http.Request.RemoteAddr` (the client socket IP).
 
 ```golang
 clientIPStrategy, err := realclientip.RightmostTrustedCountStrategy("X-Forwarded-For", 1)
@@ -41,6 +41,10 @@ So if an empty string is returned, it is either because the Strategy choice or c
 Leftmost-ish and rightmost-ish strategies support the `X-Forwarded-For` and `Forwarded` headers.
 
 `SingleIPHeaderStrategy` supports any header containing a single IP address or IP:port. For a list of some common headers, see the [Single-IP Headers wiki page](https://github.com/realclientip/realclientip-go/wiki/Single-IP-Headers).
+
+#### `Forwarded` header support
+
+Support for the `Forwarded` header should be sufficient for the vast majority of rightmost-ish uses, but it is not complete and doesn't completely adhere  to [RFC 7239](https://datatracker.ietf.org/doc/html/rfc7239). See the [`Test_forwardedHeaderRFCDeviations`](https://github.com/realclientip/realclientip-go/blob/65719ac74acb471001b3049b4270a3cc38920a30/realclientip_test.go#L1895) test for details on deviations.
 
 ### IPv6 zones
 
