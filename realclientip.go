@@ -52,6 +52,8 @@ func ChainStrategies(strategies ...Strategy) Strategy {
 // zone identifier.
 // If the IP is invalid, empty string will be returned. (This should not happen if
 // req.RemoteAddr is passed without modification.)
+// Note that if the server is accepting connections on a Unix domain socket,
+// then req.RemoteAddr will be "@" and this strategy will return an empty string.
 // This Strategy should be used if the server is directly connected to the internet.
 func RemoteAddrStrategy(_ http.Header, remoteAddr string) string {
 	ipAddr := goodIPAddr(remoteAddr)

@@ -350,6 +350,13 @@ func TestRemoteAddrStrategy(t *testing.T) {
 			},
 			want: "",
 		},
+		{
+			name: "Fail: Unix domain socket",
+			args: args{
+				remoteAddr: "@",
+			},
+			want: "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
