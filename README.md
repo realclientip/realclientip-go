@@ -1,7 +1,8 @@
 [![GoDoc](https://godoc.org/github.com/realclientip/realclientip-go?status.svg)](http://godoc.org/github.com/realclientip/realclientip-go)
+[![Go Playground](https://img.shields.io/badge/Go-playground-%23007d9c?style=flat)](https://go.dev/play/p/Z0jNsEcOCnL)
 [![Test](https://github.com/realclientip/realclientip-go/actions/workflows/test.yml/badge.svg)](https://github.com/realclientip/realclientip-go/actions/workflows/test.yml)
 ![coverage](https://img.shields.io/badge/coverage-100%25-success?style=flat)
-![license](https://img.shields.io/badge/license-Unlicense-important.svg?style=flat)
+![license](https://img.shields.io/badge/license-0BSD-important.svg?style=flat)
 
 # realclientip-go
 

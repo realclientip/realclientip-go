@@ -1,4 +1,4 @@
-// SPDX: Unlicense
+// SPDX: 0BSD
 
 package realclientip
 
