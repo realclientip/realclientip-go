@@ -26,7 +26,7 @@ clientIP := strategy.ClientIP(req.Header, req.RemoteAddr)
 
 Try it out [in the playground][playground].
 
-[playground]: https://go.dev/play/p/cVD5StdJAAp
+[playground]: https://go.dev/play/p/6npV0hJ407l
 
 There are a number of different strategies available -- the right one will depend on your network configuration. See the [documentation] to find out what's available and which you should use.
 
