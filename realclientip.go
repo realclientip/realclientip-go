@@ -10,12 +10,6 @@ import (
 	"strings"
 )
 
-/*
-* README: for functions-vs-interfaces, link to diff rather than one line
-* add String() methods; ranges especially don't print nicely
-* add helper to get all valid IPs? ("deny if any") should consider Fwd or XFF, and RemoteAddr
- */
-
 // Strategy is satisfied by all of the specific strategies in this package. It can be used
 // instead of the concrete types if the strategy is to be determined at runtime,
 // depending on configuration, for example.
@@ -34,7 +28,7 @@ const (
 )
 
 // Must panics if err is not nil. This can be used to make sure the strategy-making
-// functions do not return an error. It can also facilitate calling Chain().
+// functions do not return an error. It can also facilitate calling NewChainStrategy().
 // It can be called like Must(NewSingleIPHeaderStrategy("X-Real-IP")).
 func Must(strat Strategy, err error) Strategy {
 	if err != nil {
@@ -48,7 +42,7 @@ func Must(strat Strategy, err error) Strategy {
 // strategies are exhausted.
 // A common use for this is if a server is both directly connected to the internet and
 // expecting a header to check. It might be called like:
-//   Chain(Must(LeftmostNonPrivateStrategy("X-Forwarded-For")), RemoteAddrStrategy)
+//   NewChainStrategy(Must(LeftmostNonPrivateStrategy("X-Forwarded-For")), RemoteAddrStrategy)
 type ChainStrategy struct {
 	strategies []Strategy
 }
@@ -72,6 +66,19 @@ func (strat ChainStrategy) ClientIP(headers http.Header, remoteAddr string) stri
 		}
 	}
 	return ""
+}
+
+func (strat ChainStrategy) String() string {
+	var b strings.Builder
+	b.WriteString("{strategies:[")
+	for i, s := range strat.strategies {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(fmt.Sprintf("%T%+v", s, s))
+	}
+	b.WriteString("]}")
+	return b.String()
 }
 
 // RemoteAddrStrategy returns the client socket IP, stripped of port.
@@ -405,6 +412,19 @@ func (strat RightmostTrustedRangeStrategy) ClientIP(headers http.Header, _ strin
 
 	// Either there are no addresses or they are all in our trusted ranges
 	return ""
+}
+
+func (strat RightmostTrustedRangeStrategy) String() string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("{headerName:%v trustedRanges:[", strat.headerName))
+	for i, r := range strat.trustedRanges {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(r.String())
+	}
+	b.WriteString("]")
+	return b.String()
 }
 
 // lastHeader returns the last header with the given name. It returns empty string if the

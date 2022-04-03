@@ -1,5 +1,5 @@
 [![GoDoc](https://godoc.org/github.com/realclientip/realclientip-go?status.svg)](http://godoc.org/github.com/realclientip/realclientip-go)
-[![Go Playground](https://img.shields.io/badge/Go-playground-%23007d9c?style=flat)](https://go.dev/play/p/NUvc6U8KQKI)
+[![Go Playground](https://img.shields.io/badge/Go-playground-%23007d9c?style=flat)][playground]
 [![Test](https://github.com/realclientip/realclientip-go/actions/workflows/test.yml/badge.svg)](https://github.com/realclientip/realclientip-go/actions/workflows/test.yml)
 ![coverage](https://img.shields.io/badge/coverage-100%25-success?style=flat)
 [![license](https://img.shields.io/badge/license-0BSD-important.svg?style=flat)](https://choosealicense.com/licenses/0bsd/)
@@ -24,7 +24,9 @@ strategy, err := realclientip.NewRightmostTrustedCountStrategy("X-Forwarded-For"
 clientIP := strategy.ClientIP(req.Header, req.RemoteAddr)
 ```
 
-Try it out [in the playground](https://go.dev/play/p/NUvc6U8KQKI).
+Try it out [in the playground][playground].
+
+[playground]: https://go.dev/play/p/wEc5dRiOR2m
 
 There are a number of different strategies available -- the right one will depend on your network configuration. See the [documentation] to find out what's available and which you should use.
 
@@ -136,7 +138,7 @@ A pre-release implementation of this library [constructed functions] rather than
   getClientIP := NewRightmostTrustedCountStrategy("Forwarded", 2).ClientIP
   ```
 
-[constructed functions]: https://github.com/realclientip/realclientip-go/blob/f72b2beafd60ac4a2a07a943f47795760c105688/realclientip.go#L22
+[constructed functions]: https://github.com/realclientip/realclientip-go/commit/3254ce300803eff09a0a82d0e5557e77b98f1ef6#diff-c16a5957939fea196ee5371da58bfec10c4a10a7c360b575566759e5101a293bR19-L22
 
 ## Other language implementations
 
