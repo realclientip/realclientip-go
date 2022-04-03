@@ -1,4 +1,4 @@
-package main
+package realclientip_test
 
 import (
 	"context"
@@ -11,15 +11,16 @@ import (
 	"github.com/realclientip/realclientip-go"
 )
 
-func main() {
+func Example_middleware() {
 	// Choose the right strategy for our network configuration
-	clientIPStrategy, err := realclientip.RightmostNonPrivateStrategy("X-Forwarded-For")
+	strat, err := realclientip.NewRightmostNonPrivateStrategy("X-Forwarded-For")
 	if err != nil {
-		log.Fatal("realclientip.RightmostNonPrivateStrategy returned error (bad input)")
+		log.Fatal("realclientip.NewRightmostNonPrivateStrategy returned error (bad input)")
 	}
 
 	// Place our middleware before the handler
-	httpServer := httptest.NewServer(clientIPMiddleware(clientIPStrategy, http.HandlerFunc(handler)))
+	handlerWithMiddleware := clientIPMiddleware(strat, http.HandlerFunc(handler))
+	httpServer := httptest.NewServer(handlerWithMiddleware)
 	defer httpServer.Close()
 
 	req, _ := http.NewRequest("GET", httpServer.URL, nil)
@@ -37,15 +38,19 @@ func main() {
 	}
 
 	fmt.Printf("%s", b)
+	// Output:
+	//  your IP: 3.3.3.3
 }
 
 type clientIPCtxKey struct{}
 
 // Adds the "real" client IP to the request context under the clientIPCtxKey{} key.
 // If the client IP couldn't be obtained, the value will be an empty string.
-func clientIPMiddleware(clientIPStrategy realclientip.Strategy, next http.Handler) http.Handler {
+// We could use the RightmostNonPrivateStrategy concrete type, but instead we'll pass
+// around the Strategy interface, in case we decide to change our strategy in the future.
+func clientIPMiddleware(strat realclientip.Strategy, next http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		clientIP := clientIPStrategy(r.Header, r.RemoteAddr)
+		clientIP := strat.ClientIP(r.Header, r.RemoteAddr)
 		if clientIP == "" {
 			// Write error log. Consider aborting the request depending on use.
 			log.Fatal("Failed to find client IP")
@@ -59,5 +64,6 @@ func clientIPMiddleware(clientIPStrategy realclientip.Strategy, next http.Handle
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "your IP:", r.Context().Value(clientIPCtxKey{}))
+	clientIP := r.Context().Value(clientIPCtxKey{})
+	fmt.Fprintln(w, "your IP:", clientIP)
 }

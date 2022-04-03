@@ -10,19 +10,32 @@ import (
 	"strings"
 )
 
+/*
+* README: for functions-vs-interfaces, link to diff rather than one line
+* add String() methods; ranges especially don't print nicely
+* add helper to get all valid IPs? ("deny if any") should consider Fwd or XFF, and RemoteAddr
+ */
+
+// Strategy is satisfied by all of the specific strategies in this package. It can be used
+// instead of the concrete types if the strategy is to be determined at runtime,
+// depending on configuration, for example.
+type Strategy interface {
+	// ClientIP returns empty string if there is no derivable IP. In many cases this
+	// should be treated as a misconfiguration error, unless the strategy is attempting to
+	// get an untrustworthy or optional value.
+	// All implementations of this method must be threadsafe.
+	ClientIP(headers http.Header, remoteAddr string) string
+}
+
 const (
 	// Pre-canonicalized constants to avoid typos later on
 	xForwardedForHdr = "X-Forwarded-For"
 	forwardedHdr     = "Forwarded"
 )
 
-// A Strategy will return empty string if there is no derivable IP. In many cases this
-// should be treated as a misconfiguration error, unless the strategy is attempting to get
-// an untrustworthy or optional value.
-type Strategy func(headers http.Header, remoteAddr string) string
-
-// Must panics if err is not nil. This can be used to make sure the Strategy-making
-// functions do not return an error. It can also facilitate calling ChainStrategies.
+// Must panics if err is not nil. This can be used to make sure the strategy-making
+// functions do not return an error. It can also facilitate calling Chain().
+// It can be called like Must(NewSingleIPHeaderStrategy("X-Real-IP")).
 func Must(strat Strategy, err error) Strategy {
 	if err != nil {
 		panic(fmt.Sprintf("err is not nil: %v", err))
@@ -30,32 +43,49 @@ func Must(strat Strategy, err error) Strategy {
 	return strat
 }
 
-// ChainStrategies attempts to use the given strategies in order. If the first one returns
+// ChainStrategy attempts to use the given strategies in order. If the first one returns
 // an empty string, the second one is tried, and so on, until a good IP is found or the
-// strategies are exhausted. The IP may contain a zone identifier.
+// strategies are exhausted.
 // A common use for this is if a server is both directly connected to the internet and
 // expecting a header to check. It might be called like:
-//   ChainStrategies(Must(LeftmostNonPrivateStrategy("X-Forwarded-For")), RemoteAddrStrategy)
-func ChainStrategies(strategies ...Strategy) Strategy {
-	return func(headers http.Header, remoteAddr string) string {
-		for _, strat := range strategies {
-			result := strat(headers, remoteAddr)
-			if result != "" {
-				return result
-			}
-		}
-		return ""
-	}
+//   Chain(Must(LeftmostNonPrivateStrategy("X-Forwarded-For")), RemoteAddrStrategy)
+type ChainStrategy struct {
+	strategies []Strategy
 }
 
-// RemoteAddrStrategy returns the remoteAddr IP, stripped of port. The IP may contain a
-// zone identifier.
-// If the IP is invalid, empty string will be returned. (This should not happen if
-// req.RemoteAddr is passed without modification.)
-// Note that if the server is accepting connections on a Unix domain socket,
-// then req.RemoteAddr will be "@" and this strategy will return an empty string.
-// This Strategy should be used if the server is directly connected to the internet.
-func RemoteAddrStrategy(_ http.Header, remoteAddr string) string {
+// NewChainStrategy creates a ChainStrategy that attempts to use the given strategies to
+// derive the client IP, stopping when the first one succeeds.
+func NewChainStrategy(strategies ...Strategy) ChainStrategy {
+	return ChainStrategy{strategies: strategies}
+}
+
+// ClientIP derives the client IP using this strategy.
+// headers is expected to be like http.Request.Header.
+// remoteAddr is expected to be like http.Request.RemoteAddr.
+// The returned IP may contain a zone identifier.
+// If all chained strategies fail to derive a valid IP, an empty string is returned.
+func (strat ChainStrategy) ClientIP(headers http.Header, remoteAddr string) string {
+	for _, subStrat := range strat.strategies {
+		result := subStrat.ClientIP(headers, remoteAddr)
+		if result != "" {
+			return result
+		}
+	}
+	return ""
+}
+
+// RemoteAddrStrategy returns the client socket IP, stripped of port.
+// This strategy should be used if the server accept direct connections, rather than
+// through a reverse proxy.
+type RemoteAddrStrategy struct{}
+
+// ClientIP derives the client IP using this strategy.
+// remoteAddr is expected to be like http.Request.RemoteAddr.
+// The returned IP may contain a zone identifier.
+// If no valid IP can be derived, empty string will be returned. This should only happen
+// if remoteAddr has been modified to something illegal, or if the server is accepting
+// connections on a Unix domain socket (in which case RemoteAddr is "@").
+func (strat RemoteAddrStrategy) ClientIP(_ http.Header, remoteAddr string) string {
 	ipAddr := goodIPAddr(remoteAddr)
 	if ipAddr == nil {
 		return ""
@@ -64,177 +94,209 @@ func RemoteAddrStrategy(_ http.Header, remoteAddr string) string {
 	return ipAddr.String()
 }
 
-// SingleIPHeaderStrategy creates a Strategy for deriving an IP address from a single-IP
-// header. The IP may contain a zone identifier.
-// If the IP is invalid, the Strategy returns an empty string.
+// SingleIPHeaderStrategy derives an IP address from a single-IP header.
 // A non-exhaustive list of such single-IP headers is:
 // X-Real-IP, CF-Connecting-IP, True-Client-IP, Fastly-Client-IP, X-Azure-ClientIP, X-Azure-SocketIP.
-// This Strategy should be used when the given header is added by a trusted reverse proxy.
+// This strategy should be used when the given header is added by a trusted reverse proxy.
 // You must ensure that this header is not spoofable (as is possible with Akamai's use of
 // True-Client-IP, Fastly's default use of Fastly-Client-IP, and Azure's X-Azure-ClientIP).
-func SingleIPHeaderStrategy(headerName string) (Strategy, error) {
-	if headerName == "" {
-		return nil, fmt.Errorf("SingleIPHeaderStrategy header must not be empty")
-	}
-
-	// We will be using the headerName for lookups in the http.Header map, which is keyed
-	// by canonicalized header name. We'll do that here so we only have to do it once.
-	canonicalHeaderKey := http.CanonicalHeaderKey(headerName)
-	if canonicalHeaderKey == xForwardedForHdr || canonicalHeaderKey == forwardedHdr {
-		return nil, fmt.Errorf("SingleIPHeaderStrategy header must not be %s or %s", xForwardedForHdr, forwardedHdr)
-	}
-
-	strat := func(headers http.Header, _ string) string {
-		// RFC 2616 does not allow multiple instances of single-IP headers (or any non-list header).
-		// It is debatable whether it is better to treat multiple such headers as an error
-		// (more correct) or simply pick one of them (more flexible). As we've already
-		// told the user tom make sure the header is not spoofable, we're going to use the
-		// last header instance if there are multiple. (Using the last is arbitrary, but
-		// in theory it should be the newest value.)
-		ipStr := lastHeader(headers, canonicalHeaderKey)
-		if ipStr == "" {
-			// There is no header
-			return ""
-		}
-
-		ipAddr := goodIPAddr(ipStr)
-		if ipAddr == nil {
-			// The header value is invalid
-			return ""
-		}
-
-		return ipAddr.String()
-	}
-
-	return strat, nil
+// See the single-IP wiki page for more info: https://github.com/realclientip/realclientip-go/wiki/Single-IP-Headers
+type SingleIPHeaderStrategy struct {
+	headerName string
 }
 
-// LeftmostNonPrivateStrategy creates a Strategy that returns the leftmost valid and
-// non-private IP address. The IP may contain a zone identifier.
-// headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
-// those headers is quite different, so make sure you use the one appropriate to your
-// network configuration.)
-// If the IP is invalid, the Strategy returns an empty string.
-// This Strategy should be used when a valid, non-private IP closest to the client is desired.
-// Note that this MUST NOT BE USED FOR SECURITY PURPOSES. This IP can be TRIVIALLY SPOOFED.
-func LeftmostNonPrivateStrategy(headerName string) (Strategy, error) {
+// NewSingleIPHeaderStrategy creates a SingleIPHeaderStrategy that uses the headerName
+// request header to get the client IP.
+func NewSingleIPHeaderStrategy(headerName string) (SingleIPHeaderStrategy, error) {
 	if headerName == "" {
-		return nil, fmt.Errorf("LeftmostNonPrivateStrategy header must not be empty")
+		return SingleIPHeaderStrategy{}, fmt.Errorf("SingleIPHeaderStrategy header must not be empty")
 	}
 
 	// We will be using the headerName for lookups in the http.Header map, which is keyed
-	// by canonicalized header name. We'll do that here so we only have to do it once.
-	canonicalHeaderKey := http.CanonicalHeaderKey(headerName)
-	if canonicalHeaderKey != xForwardedForHdr && canonicalHeaderKey != forwardedHdr {
-		return nil, fmt.Errorf("LeftmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
+	// by canonicalized header name. We'll canonicalize here so we only have to do it once.
+	headerName = http.CanonicalHeaderKey(headerName)
+
+	if headerName == xForwardedForHdr || headerName == forwardedHdr {
+		return SingleIPHeaderStrategy{}, fmt.Errorf("SingleIPHeaderStrategy header must not be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
-	strat := func(headers http.Header, _ string) string {
-		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
-		for _, ip := range ipAddrs {
-			if ip != nil && !isPrivateOrLocal(ip.IP) {
-				// This is the leftmost valid, non-private IP
-				return ip.String()
-			}
-		}
+	return SingleIPHeaderStrategy{headerName: headerName}, nil
+}
 
-		// We failed to find any valid, non-private IP
+// ClientIP derives the client IP using this strategy.
+// headers is expected to be like http.Request.Header.
+// The returned IP may contain a zone identifier.
+// If no valid IP can be derived, empty string will be returned.
+func (strat SingleIPHeaderStrategy) ClientIP(headers http.Header, _ string) string {
+	// RFC 2616 does not allow multiple instances of single-IP headers (or any non-list header).
+	// It is debatable whether it is better to treat multiple such headers as an error
+	// (more correct) or simply pick one of them (more flexible). As we've already
+	// told the user tom make sure the header is not spoofable, we're going to use the
+	// last header instance if there are multiple. (Using the last is arbitrary, but
+	// in theory it should be the newest value.)
+	ipStr := lastHeader(headers, strat.headerName)
+	if ipStr == "" {
+		// There is no header
 		return ""
 	}
 
-	return strat, nil
+	ipAddr := goodIPAddr(ipStr)
+	if ipAddr == nil {
+		// The header value is invalid
+		return ""
+	}
+
+	return ipAddr.String()
 }
 
-// RightmostNonPrivateStrategy creates a Strategy that returns the rightmost valid,
-// non-private/non-internal IP address. The IP may contain a zone identifier.
-// headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
-// those headers is quite different, so make sure you use the one appropriate to your
-// network configuration.)
-// If the IP is invalid, the Strategy returns an empty string.
-// This Strategy should be used when  all the reverse proxies between the internet and the
+// LeftmostNonPrivateStrategy derives the client IP from the leftmost valid and
+// non-private IP address in the X-Fowarded-For for Forwarded header. This
+// strategy should be used when a valid, non-private IP closest to the client is desired.
+// Note that this MUST NOT BE USED FOR SECURITY PURPOSES. This IP can be TRIVIALLY
+// SPOOFED.
+type LeftmostNonPrivateStrategy struct {
+	headerName string
+}
+
+// NewLeftmostNonPrivateStrategy creates a LeftmostNonPrivateStrategy. headerName must be
+// "X-Forwarded-For" or "Forwarded".
+func NewLeftmostNonPrivateStrategy(headerName string) (LeftmostNonPrivateStrategy, error) {
+	if headerName == "" {
+		return LeftmostNonPrivateStrategy{}, fmt.Errorf("LeftmostNonPrivateStrategy header must not be empty")
+	}
+
+	// We will be using the headerName for lookups in the http.Header map, which is keyed
+	// by canonicalized header name. We'll do that here so we only have to do it once.
+	headerName = http.CanonicalHeaderKey(headerName)
+
+	if headerName != xForwardedForHdr && headerName != forwardedHdr {
+		return LeftmostNonPrivateStrategy{}, fmt.Errorf("LeftmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
+	}
+
+	return LeftmostNonPrivateStrategy{headerName: headerName}, nil
+}
+
+// ClientIP derives the client IP using this strategy.
+// headers is expected to be like http.Request.Header.
+// The returned IP may contain a zone identifier.
+// If no valid IP can be derived, empty string will be returned.
+func (strat LeftmostNonPrivateStrategy) ClientIP(headers http.Header, _ string) string {
+	ipAddrs := getIPAddrList(headers, strat.headerName)
+	for _, ip := range ipAddrs {
+		if ip != nil && !isPrivateOrLocal(ip.IP) {
+			// This is the leftmost valid, non-private IP
+			return ip.String()
+		}
+	}
+
+	// We failed to find any valid, non-private IP
+	return ""
+}
+
+// RightmostNonPrivateStrategy derives the client IP from the rightmost valid,
+// non-private/non-internal IP address in the X-Fowarded-For for Forwarded header. This
+// strategy should be used when all reverse proxies between the internet and the
 // server have private-space IP addresses.
-func RightmostNonPrivateStrategy(headerName string) (Strategy, error) {
+type RightmostNonPrivateStrategy struct {
+	headerName string
+}
+
+// NewRightmostNonPrivateStrategy creates a RightmostNonPrivateStrategy. headerName must
+// be "X-Forwarded-For" or "Forwarded".
+func NewRightmostNonPrivateStrategy(headerName string) (RightmostNonPrivateStrategy, error) {
 	if headerName == "" {
-		return nil, fmt.Errorf("RightmostNonPrivateStrategy header must not be empty")
+		return RightmostNonPrivateStrategy{}, fmt.Errorf("RightmostNonPrivateStrategy header must not be empty")
 	}
 
 	// We will be using the headerName for lookups in the http.Header map, which is keyed
 	// by canonicalized header name. We'll do that here so we only have to do it once.
-	canonicalHeaderKey := http.CanonicalHeaderKey(headerName)
-	if canonicalHeaderKey != xForwardedForHdr && canonicalHeaderKey != forwardedHdr {
-		return nil, fmt.Errorf("RightmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
+	headerName = http.CanonicalHeaderKey(headerName)
+
+	if headerName != xForwardedForHdr && headerName != forwardedHdr {
+		return RightmostNonPrivateStrategy{}, fmt.Errorf("RightmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
-	strat := func(headers http.Header, _ string) string {
-		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
-		// Look backwards through the list of IP addresses
-		for i := len(ipAddrs) - 1; i >= 0; i-- {
-			if ipAddrs[i] != nil && !isPrivateOrLocal(ipAddrs[i].IP) {
-				// This is the rightmost non-private IP
-				return ipAddrs[i].String()
-			}
-		}
-
-		// We failed to find any valid, non-private IP
-		return ""
-	}
-
-	return strat, nil
+	return RightmostNonPrivateStrategy{headerName: headerName}, nil
 }
 
-// RightmostTrustedCountStrategy creates a Strategy that returns the valid
-// IP address added by the first trusted reverse proxy. trustedCount is the number of
-// reverse proxies between the internet and the server. It must be greater than zero. The
-// IP returned will be the (trustedCount-1)th from the right. For example, if there's only
-// one trusted proxy, this strategy will return the last (rightmost) IP address.
-// The IP may contain a zone identifier.
-// headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
-// those headers is quite different, so make sure you use the one appropriate to your
-// network configuration.)
-// If the IP is invalid, the Strategy returns an empty string.
-// This Strategy should be used when there is a fixed number of reverse proxies between
-// the internet and the server.
-func RightmostTrustedCountStrategy(headerName string, trustedCount int) (Strategy, error) {
+// ClientIP derives the client IP using this strategy.
+// headers is expected to be like http.Request.Header.
+// The returned IP may contain a zone identifier.
+// If no valid IP can be derived, empty string will be returned.
+func (strat RightmostNonPrivateStrategy) ClientIP(headers http.Header, _ string) string {
+	ipAddrs := getIPAddrList(headers, strat.headerName)
+	// Look backwards through the list of IP addresses
+	for i := len(ipAddrs) - 1; i >= 0; i-- {
+		if ipAddrs[i] != nil && !isPrivateOrLocal(ipAddrs[i].IP) {
+			// This is the rightmost non-private IP
+			return ipAddrs[i].String()
+		}
+	}
+
+	// We failed to find any valid, non-private IP
+	return ""
+}
+
+// RightmostTrustedCountStrategy derives the client IP from the valid IP address added by
+// the first trusted reverse proxy to the X-Forwarded-For or Forwarded header. This
+// Strategy should be used when there is a fixed number of trusted reverse proxies that
+// are appending IP addresses to the header.
+type RightmostTrustedCountStrategy struct {
+	headerName   string
+	trustedCount int
+}
+
+// NewRightmostTrustedCountStrategy creates a RightmostTrustedCountStrategy. headerName
+// must be "X-Forwarded-For" or "Forwarded". trustedCount is the  number of trusted
+// reverse proxies. The IP returned will be the (trustedCount-1)th from the right. For
+// example, if there's only one trusted proxy, this strategy will return the last
+// (rightmost) IP address.
+func NewRightmostTrustedCountStrategy(headerName string, trustedCount int) (RightmostTrustedCountStrategy, error) {
 	if headerName == "" {
-		return nil, fmt.Errorf("RightmostTrustedCountStrategy header must not be empty")
+		return RightmostTrustedCountStrategy{}, fmt.Errorf("RightmostTrustedCountStrategy header must not be empty")
 	}
 
 	if trustedCount <= 0 {
-		return nil, fmt.Errorf("RightmostTrustedCountStrategy count must be greater than zero")
+		return RightmostTrustedCountStrategy{}, fmt.Errorf("RightmostTrustedCountStrategy count must be greater than zero")
 	}
 
 	// We will be using the headerName for lookups in the http.Header map, which is keyed
 	// by canonicalized header name. We'll do that here so we only have to do it once.
-	canonicalHeaderKey := http.CanonicalHeaderKey(headerName)
-	if canonicalHeaderKey != xForwardedForHdr && canonicalHeaderKey != forwardedHdr {
-		return nil, fmt.Errorf("RightmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
+	headerName = http.CanonicalHeaderKey(headerName)
+
+	if headerName != xForwardedForHdr && headerName != forwardedHdr {
+		return RightmostTrustedCountStrategy{}, fmt.Errorf("RightmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
-	strat := func(headers http.Header, _ string) string {
-		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
+	return RightmostTrustedCountStrategy{headerName: headerName, trustedCount: trustedCount}, nil
+}
 
-		// We want the (N-1)th from the rightmost. For example, if there's only one
-		// trusted proxy, we want the last.
-		rightmostIndex := len(ipAddrs) - 1
-		targetIndex := rightmostIndex - (trustedCount - 1)
+// ClientIP derives the client IP using this strategy.
+// headers is expected to be like http.Request.Header.
+// The returned IP may contain a zone identifier.
+// If no valid IP can be derived, empty string will be returned.
+func (strat RightmostTrustedCountStrategy) ClientIP(headers http.Header, _ string) string {
+	ipAddrs := getIPAddrList(headers, strat.headerName)
 
-		if targetIndex < 0 {
-			// This is a misconfiguration error. There were fewer IPs than we expected.
-			return ""
-		}
+	// We want the (N-1)th from the rightmost. For example, if there's only one
+	// trusted proxy, we want the last.
+	rightmostIndex := len(ipAddrs) - 1
+	targetIndex := rightmostIndex - (strat.trustedCount - 1)
 
-		resultIP := ipAddrs[targetIndex]
-
-		if resultIP == nil {
-			// This is a misconfiguration error. Our first trusted proxy didn't add a
-			// valid IP address to the header.
-			return ""
-		}
-
-		return resultIP.String()
+	if targetIndex < 0 {
+		// This is a misconfiguration error. There were fewer IPs than we expected.
+		return ""
 	}
 
-	return strat, nil
+	resultIP := ipAddrs[targetIndex]
+
+	if resultIP == nil {
+		// This is a misconfiguration error. Our first trusted proxy didn't add a
+		// valid IP address to the header.
+		return ""
+	}
+
+	return resultIP.String()
 }
 
 // AddressesAndRangesToIPNets converts a slice of strings with IPv4 and IPv6 addresses and
@@ -283,56 +345,66 @@ func AddressesAndRangesToIPNets(ranges ...string) ([]net.IPNet, error) {
 	return result, nil
 }
 
-// RightmostTrustedRangeStrategy creates a Strategy that returns the rightmost valid IP
-// address which is not in trustedRanges. The IP may contain a zone identifier.
-// trustedRanges can be private/internal or external (for example, if a third-party reverse proxy is used).
-// headerName must be either "X-Forwarded-For" or "Forwarded". (Note that the format of
-// those headers is quite different, so make sure you use the one appropriate to your
-// network configuration.)
-// If the IP is invalid, the Strategy returns an empty string.
-// This Strategy should be used when the IP ranges of the reverse proxies between the
+// RightmostTrustedRangeStrategy derives the client IP from the rightmost valid IP address
+// in the X-Forwarded-For or Forwarded header which is not in a set of trusted IP ranges.
+// This strategy should be used when the IP ranges of the reverse proxies between the
 // internet and the server are known.
-// If a third-party WAF, CDN, etc., is used, you SHOULD use a method of verifying it that
-// is stronger than checking its IP address. Failure to do so can result in scenarios like:
+// If a third-party WAF, CDN, etc., is used, you SHOULD use a method of verifying its
+// access to your origin that is stronger than checking its IP address (e.g., using
+// authenticated pulls). Failure to do so can result in scenarios like:
 // You use AWS CloudFront in front of a server you host elsewhere. An attacker creates a
 // CF distribution that points at your origin server. The attacker uses Lambda@Edge to
 // spoof the Host and X-Forwarded-For headers. Now your "trusted" reverse proxy is no
 // longer trustworthy.
-func RightmostTrustedRangeStrategy(headerName string, trustedRanges []net.IPNet) (Strategy, error) {
+type RightmostTrustedRangeStrategy struct {
+	headerName    string
+	trustedRanges []net.IPNet
+}
+
+// NewRightmostTrustedRangeStrategy creates a RightmostTrustedRangeStrategy. headerName
+// must be "X-Forwarded-For" or "Forwarded". trustedRanges must contain all trusted
+// reverse proxies on the path to this server. trustedRanges can be private/internal or
+// external (for example, if a third-party reverse proxy is used).
+func NewRightmostTrustedRangeStrategy(headerName string, trustedRanges []net.IPNet) (RightmostTrustedRangeStrategy, error) {
 	if headerName == "" {
-		return nil, fmt.Errorf("RightmostTrustedRangeStrategy header must not be empty")
+		return RightmostTrustedRangeStrategy{}, fmt.Errorf("RightmostTrustedRangeStrategy header must not be empty")
 	}
 
 	// We will be using the headerName for lookups in the http.Header map, which is keyed
 	// by canonicalized header name. We'll do that here so we only have to do it once.
-	canonicalHeaderKey := http.CanonicalHeaderKey(headerName)
-	if canonicalHeaderKey != xForwardedForHdr && canonicalHeaderKey != forwardedHdr {
-		return nil, fmt.Errorf("RightmostTrustedRangeStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
+	headerName = http.CanonicalHeaderKey(headerName)
+
+	if headerName != xForwardedForHdr && headerName != forwardedHdr {
+		return RightmostTrustedRangeStrategy{}, fmt.Errorf("RightmostTrustedRangeStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
-	strat := func(headers http.Header, _ string) string {
-		ipAddrs := getIPAddrList(headers, canonicalHeaderKey)
-		// Look backwards through the list of IP addresses
-		for i := len(ipAddrs) - 1; i >= 0; i-- {
-			if ipAddrs[i] != nil && isIPContainedInRanges(ipAddrs[i].IP, trustedRanges) {
-				// This IP is trusted
-				continue
-			}
+	return RightmostTrustedRangeStrategy{headerName: headerName, trustedRanges: trustedRanges}, nil
+}
 
-			// At this point we have found the first-from-the-rightmost untrusted IP
-
-			if ipAddrs[i] == nil {
-				return ""
-			}
-
-			return ipAddrs[i].String()
+// ClientIP derives the client IP using this strategy.
+// headers is expected to be like http.Request.Header.
+// The returned IP may contain a zone identifier.
+// If no valid IP can be derived, empty string will be returned.
+func (strat RightmostTrustedRangeStrategy) ClientIP(headers http.Header, _ string) string {
+	ipAddrs := getIPAddrList(headers, strat.headerName)
+	// Look backwards through the list of IP addresses
+	for i := len(ipAddrs) - 1; i >= 0; i-- {
+		if ipAddrs[i] != nil && isIPContainedInRanges(ipAddrs[i].IP, strat.trustedRanges) {
+			// This IP is trusted
+			continue
 		}
 
-		// Either there are no addresses or they are all in our trusted ranges
-		return ""
+		// At this point we have found the first-from-the-rightmost untrusted IP
+
+		if ipAddrs[i] == nil {
+			return ""
+		}
+
+		return ipAddrs[i].String()
 	}
 
-	return strat, nil
+	// Either there are no addresses or they are all in our trusted ranges
+	return ""
 }
 
 // lastHeader returns the last header with the given name. It returns empty string if the

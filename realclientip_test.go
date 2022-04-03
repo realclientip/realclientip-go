@@ -60,202 +60,10 @@ func ipAddrsEqual(a, b net.IPAddr) bool {
 	return a.IP.Equal(b.IP) && a.Zone == b.Zone
 }
 
-func Test_parseForwardedListItem(t *testing.T) {
-	mustParseIPAddrPtr := func(ipStr string) *net.IPAddr {
-		res := MustParseIPAddr(ipStr)
-		return &res
-	}
-
-	tests := []struct {
-		name string
-		fwd  string
-		want *net.IPAddr
-	}{
-		{
-			// This is the correct form for IPv6 wit port
-			name: "IPv6 with port and quotes",
-			fwd:  `For="[2607:f8b0:4004:83f::200e]:4711"`,
-			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
-		},
-		{
-			// This is the correct form for IP with no port
-			name: "IPv6 with quotes, brackets and no port",
-			fwd:  `fOR="[2607:f8b0:4004:83f::200e]"`,
-			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
-		},
-		{
-			// RFC deviation: missing brackets
-			name: "IPv6 with quotes, no brackets, and no port",
-			fwd:  `for="2607:f8b0:4004:83f::200e"`,
-			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
-		},
-		{
-			// RFC deviation: missing quotes
-			name: "IPv6 with brackets, no quotes, and no port",
-			fwd:  `FOR=[2607:f8b0:4004:83f::200e]`,
-			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
-		},
-		{
-			// RFC deviation: missing quotes
-			name: "IPv6 with port and no quotes",
-			fwd:  `For=[2607:f8b0:4004:83f::200e]:4711`,
-			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
-		},
-		{
-			name: "IPv6 with port, quotes, and zone",
-			fwd:  `For="[fe80::abcd%zone]:4711"`,
-			want: mustParseIPAddrPtr("fe80::abcd%zone"),
-		},
-		{
-			// RFC deviation: missing brackets
-			name: "IPv6 with zone, no quotes, no port",
-			fwd:  `For="fe80::abcd%zone"`,
-			want: mustParseIPAddrPtr("fe80::abcd%zone"),
-		},
-		{
-			// RFC deviation: missing quotes
-			name: "IPv4 with port",
-			fwd:  `FoR=192.0.2.60:4711`,
-			want: mustParseIPAddrPtr("192.0.2.60"),
-		},
-		{
-			name: "IPv4 with no port",
-			fwd:  `for=192.0.2.60`,
-			want: mustParseIPAddrPtr("192.0.2.60"),
-		},
-		{
-			name: "IPv4 with quotes",
-			fwd:  `for="192.0.2.60"`,
-			want: mustParseIPAddrPtr("192.0.2.60"),
-		},
-		{
-			name: "IPv4 with port and quotes",
-			fwd:  `for="192.0.2.60:4823"`,
-			want: mustParseIPAddrPtr("192.0.2.60"),
-		},
-		{
-			name: "Error: invalid IPv4",
-			fwd:  `for=192.0.2.999`,
-			want: nil,
-		},
-		{
-			name: "Error: invalid IPv6",
-			fwd:  `for="2607:f8b0:4004:83f::999999"`,
-			want: nil,
-		},
-		{
-			name: "Error: non-IP identifier",
-			fwd:  `for="_test"`,
-			want: nil,
-		},
-		{
-			name: "Error: empty IP value",
-			fwd:  `for=`,
-			want: nil,
-		},
-		{
-			name: "Multiple IPv4 directives",
-			fwd:  `by=1.1.1.1; for=2.2.2.2;host=myhost; proto=https`,
-			want: mustParseIPAddrPtr("2.2.2.2"),
-		},
-		{
-			// RFC deviation: missing quotes around IPv6
-			name: "Multiple IPv6 directives",
-			fwd:  `by=1::1;host=myhost;for=2::2;proto=https`,
-			want: mustParseIPAddrPtr("2::2"),
-		},
-		{
-			// RFC deviation: missing quotes around IPv6
-			name: "Multiple mixed directives",
-			fwd:  `by=1::1;host=myhost;proto=https;for=2.2.2.2`,
-			want: mustParseIPAddrPtr("2.2.2.2"),
-		},
-		{
-			name: "IPv4-mapped IPv6",
-			fwd:  `for="[::ffff:188.0.2.128]"`,
-			want: mustParseIPAddrPtr("188.0.2.128"),
-		},
-		{
-			name: "IPv4-mapped IPv6 with port and quotes",
-			fwd:  `for="[::ffff:188.0.2.128]:49428"`,
-			want: mustParseIPAddrPtr("188.0.2.128"),
-		},
-		{
-			name: "IPv4-mapped IPv6 in IPv6 form",
-			fwd:  `for="[0:0:0:0:0:ffff:bc15:0006]"`,
-			want: mustParseIPAddrPtr("188.21.0.6"),
-		},
-		{
-			name: "NAT64 IPv4-mapped IPv6",
-			fwd:  `for="[64:ff9b::188.0.2.128]"`,
-			want: mustParseIPAddrPtr("64:ff9b::188.0.2.128"),
-		},
-		{
-			name: "IPv4 loopback",
-			fwd:  `for=127.0.0.1`,
-			want: mustParseIPAddrPtr("127.0.0.1"),
-		},
-		{
-			name: "IPv6 loopback",
-			fwd:  `for="[::1]"`,
-			want: mustParseIPAddrPtr("::1"),
-		},
-		{
-			// RFC deviation: quotes must be matched
-			name: "Error: Unmatched quote",
-			fwd:  `for="1.1.1.1`,
-			want: nil,
-		},
-		{
-			// RFC deviation: brackets must be matched
-			name: "Error: IPv6 loopback",
-			fwd:  `for="::1]"`,
-			want: nil,
-		},
-		{
-			name: "Error: misplaced quote",
-			fwd:  `for="[0:0:0:0:0:ffff:bc15:0006"]`,
-			want: nil,
-		},
-		{
-			name: "Error: garbage",
-			fwd:  "ads\x00jkl&#*(383fdljk",
-			want: nil,
-		},
-		{
-			// Per RFC 7230 section 3.2.6, this should not be an error, but we don't have
-			// full syntax support yet.
-			name: "RFC deviation: quoted pair",
-			fwd:  `for=1.1.1.\1`,
-			want: nil,
-		},
-		{
-			// Per RFC 7239, this extraneous whitespace should be an error, but we don't
-			// have full syntax support yet.
-			name: "RFC deviation: Incorrect whitespace",
-			fwd:  `for= 1.1.1.1`,
-			want: mustParseIPAddrPtr("1.1.1.1"),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseForwardedListItem(tt.fwd)
-
-			if got == nil || tt.want == nil {
-				if got != tt.want {
-					t.Fatalf("parseForwardedListItem() = %v, want %v", got, tt.want)
-				}
-				return
-			}
-
-			if !ipAddrsEqual(*got, *tt.want) {
-				t.Fatalf("parseForwardedListItem() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRemoteAddrStrategy(t *testing.T) {
+	// Ensure the strategy interface is implemented
+	var _ Strategy = RemoteAddrStrategy{}
+
 	type args struct {
 		headers    http.Header
 		remoteAddr string
@@ -402,14 +210,18 @@ func TestRemoteAddrStrategy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := RemoteAddrStrategy(tt.args.headers, tt.args.remoteAddr); got != tt.want {
-				t.Fatalf("RemoteAddrStrategy() = %q, want %q", got, tt.want)
+			strat := RemoteAddrStrategy{}
+			if got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr); got != tt.want {
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestSingleIPHeaderStrategy(t *testing.T) {
+	// Ensure the strategy interface is implemented
+	var _ Strategy = SingleIPHeaderStrategy{}
+
 	type args struct {
 		headerName string
 		headers    http.Header
@@ -599,9 +411,9 @@ func TestSingleIPHeaderStrategy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			strat, err := SingleIPHeaderStrategy(tt.args.headerName)
+			strat, err := NewSingleIPHeaderStrategy(tt.args.headerName)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("SingleIPHeaderStrategy() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("NewSingleIPHeaderStrategy error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -610,15 +422,18 @@ func TestSingleIPHeaderStrategy(t *testing.T) {
 				return
 			}
 
-			got := strat(tt.args.headers, tt.args.remoteAddr)
+			got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("strat() = %q, want %q", got, tt.want)
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestLeftmostNonPrivateStrategy(t *testing.T) {
+	// Ensure the strategy interface is implemented
+	var _ Strategy = LeftmostNonPrivateStrategy{}
+
 	type args struct {
 		headerName string
 		headers    http.Header
@@ -843,9 +658,9 @@ func TestLeftmostNonPrivateStrategy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			strat, err := LeftmostNonPrivateStrategy(tt.args.headerName)
+			strat, err := NewLeftmostNonPrivateStrategy(tt.args.headerName)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("LeftmostNonPrivateStrategy() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("NewLeftmostNonPrivateStrategy error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -854,15 +669,18 @@ func TestLeftmostNonPrivateStrategy(t *testing.T) {
 				return
 			}
 
-			got := strat(tt.args.headers, tt.args.remoteAddr)
+			got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("strat() = %q, want %q", got, tt.want)
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestRightmostNonPrivateStrategy(t *testing.T) {
+	// Ensure the strategy interface is implemented
+	var _ Strategy = RightmostNonPrivateStrategy{}
+
 	type args struct {
 		headerName string
 		headers    http.Header
@@ -1088,9 +906,9 @@ func TestRightmostNonPrivateStrategy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			strat, err := RightmostNonPrivateStrategy(tt.args.headerName)
+			strat, err := NewRightmostNonPrivateStrategy(tt.args.headerName)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("RightmostNonPrivateStrategy() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("NewRightmostNonPrivateStrategy error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -1099,15 +917,18 @@ func TestRightmostNonPrivateStrategy(t *testing.T) {
 				return
 			}
 
-			got := strat(tt.args.headers, tt.args.remoteAddr)
+			got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("strat() = %q, want %q", got, tt.want)
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestRightmostTrustedCountStrategy(t *testing.T) {
+	// Ensure the strategy interface is implemented
+	var _ Strategy = RightmostTrustedCountStrategy{}
+
 	type args struct {
 		headerName   string
 		trustedCount int
@@ -1251,9 +1072,9 @@ func TestRightmostTrustedCountStrategy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			strat, err := RightmostTrustedCountStrategy(tt.args.headerName, tt.args.trustedCount)
+			strat, err := NewRightmostTrustedCountStrategy(tt.args.headerName, tt.args.trustedCount)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("RightmostTrustedCountStrategy() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("NewRightmostTrustedCountStrategy error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -1262,9 +1083,9 @@ func TestRightmostTrustedCountStrategy(t *testing.T) {
 				return
 			}
 
-			got := strat(tt.args.headers, tt.args.remoteAddr)
+			got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("strat() = %q, want %q", got, tt.want)
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1372,6 +1193,9 @@ func TestAddressesAndRangesToIPNets(t *testing.T) {
 }
 
 func TestRightmostTrustedRangeStrategy(t *testing.T) {
+	// Ensure the strategy interface is implemented
+	var _ Strategy = RightmostTrustedRangeStrategy{}
+
 	type args struct {
 		headerName    string
 		headers       http.Header
@@ -1532,9 +1356,9 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 				t.Fatalf("AddressesAndRangesToIPNets failed")
 			}
 
-			strat, err := RightmostTrustedRangeStrategy(tt.args.headerName, ranges)
+			strat, err := NewRightmostTrustedRangeStrategy(tt.args.headerName, ranges)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("RightmostTrustedRangeStrategy() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("NewRightmostTrustedRangeStrategy error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -1543,15 +1367,15 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 				return
 			}
 
-			got := strat(tt.args.headers, tt.args.remoteAddr)
+			got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("strat() = %q, want %q", got, tt.want)
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestChainStrategies(t *testing.T) {
+func TestChainStrategy(t *testing.T) {
 	type args struct {
 		strategies []Strategy
 		headers    http.Header
@@ -1565,7 +1389,7 @@ func TestChainStrategies(t *testing.T) {
 		{
 			name: "Single strategy",
 			args: args{
-				strategies: []Strategy{RemoteAddrStrategy},
+				strategies: []Strategy{RemoteAddrStrategy{}},
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
@@ -1578,10 +1402,10 @@ func TestChainStrategies(t *testing.T) {
 			name: "Multiple strategies",
 			args: args{
 				strategies: []Strategy{
-					Must(RightmostNonPrivateStrategy("Forwarded")),
-					Must(SingleIPHeaderStrategy("true-client-ip")),
-					Must(SingleIPHeaderStrategy("x-real-ip")),
-					RemoteAddrStrategy,
+					Must(NewRightmostNonPrivateStrategy("Forwarded")),
+					Must(NewSingleIPHeaderStrategy("true-client-ip")),
+					Must(NewSingleIPHeaderStrategy("x-real-ip")),
+					RemoteAddrStrategy{},
 				},
 				headers: http.Header{
 					"X-Real-Ip":       []string{`1.1.1.1`},
@@ -1607,10 +1431,10 @@ func TestChainStrategies(t *testing.T) {
 			name: "Fail: Multiple strategies, all fail",
 			args: args{
 				strategies: []Strategy{
-					Must(RightmostNonPrivateStrategy("Forwarded")),
-					Must(SingleIPHeaderStrategy("true-client-ip")),
-					Must(SingleIPHeaderStrategy("x-real-ip")),
-					RemoteAddrStrategy,
+					Must(NewRightmostNonPrivateStrategy("Forwarded")),
+					Must(NewSingleIPHeaderStrategy("true-client-ip")),
+					Must(NewSingleIPHeaderStrategy("x-real-ip")),
+					RemoteAddrStrategy{},
 				},
 				headers: http.Header{
 					"X-Forwarded-For": []string{`2.2.2.2:3384, 3.3.3.3`, `4.4.4.4`},
@@ -1622,11 +1446,11 @@ func TestChainStrategies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			strat := ChainStrategies(tt.args.strategies...)
+			strat := NewChainStrategy(tt.args.strategies...)
 
-			got := strat(tt.args.headers, tt.args.remoteAddr)
+			got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("strat() = %q, want %q", got, tt.want)
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1640,7 +1464,7 @@ func TestMust(t *testing.T) {
 		}
 	}()
 
-	Must(RemoteAddrStrategy, fmt.Errorf("oh no"))
+	Must(RemoteAddrStrategy{}, fmt.Errorf("oh no"))
 }
 
 func TestMustParseIPAddr(t *testing.T) {
@@ -1888,6 +1712,201 @@ func Test_trimMatchedEnds(t *testing.T) {
 	}()
 
 	trimMatchedEnds("nope", "abcd")
+}
+
+func Test_parseForwardedListItem(t *testing.T) {
+	mustParseIPAddrPtr := func(ipStr string) *net.IPAddr {
+		res := MustParseIPAddr(ipStr)
+		return &res
+	}
+
+	tests := []struct {
+		name string
+		fwd  string
+		want *net.IPAddr
+	}{
+		{
+			// This is the correct form for IPv6 wit port
+			name: "IPv6 with port and quotes",
+			fwd:  `For="[2607:f8b0:4004:83f::200e]:4711"`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
+		},
+		{
+			// This is the correct form for IP with no port
+			name: "IPv6 with quotes, brackets and no port",
+			fwd:  `fOR="[2607:f8b0:4004:83f::200e]"`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
+		},
+		{
+			// RFC deviation: missing brackets
+			name: "IPv6 with quotes, no brackets, and no port",
+			fwd:  `for="2607:f8b0:4004:83f::200e"`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
+		},
+		{
+			// RFC deviation: missing quotes
+			name: "IPv6 with brackets, no quotes, and no port",
+			fwd:  `FOR=[2607:f8b0:4004:83f::200e]`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
+		},
+		{
+			// RFC deviation: missing quotes
+			name: "IPv6 with port and no quotes",
+			fwd:  `For=[2607:f8b0:4004:83f::200e]:4711`,
+			want: mustParseIPAddrPtr("2607:f8b0:4004:83f::200e"),
+		},
+		{
+			name: "IPv6 with port, quotes, and zone",
+			fwd:  `For="[fe80::abcd%zone]:4711"`,
+			want: mustParseIPAddrPtr("fe80::abcd%zone"),
+		},
+		{
+			// RFC deviation: missing brackets
+			name: "IPv6 with zone, no quotes, no port",
+			fwd:  `For="fe80::abcd%zone"`,
+			want: mustParseIPAddrPtr("fe80::abcd%zone"),
+		},
+		{
+			// RFC deviation: missing quotes
+			name: "IPv4 with port",
+			fwd:  `FoR=192.0.2.60:4711`,
+			want: mustParseIPAddrPtr("192.0.2.60"),
+		},
+		{
+			name: "IPv4 with no port",
+			fwd:  `for=192.0.2.60`,
+			want: mustParseIPAddrPtr("192.0.2.60"),
+		},
+		{
+			name: "IPv4 with quotes",
+			fwd:  `for="192.0.2.60"`,
+			want: mustParseIPAddrPtr("192.0.2.60"),
+		},
+		{
+			name: "IPv4 with port and quotes",
+			fwd:  `for="192.0.2.60:4823"`,
+			want: mustParseIPAddrPtr("192.0.2.60"),
+		},
+		{
+			name: "Error: invalid IPv4",
+			fwd:  `for=192.0.2.999`,
+			want: nil,
+		},
+		{
+			name: "Error: invalid IPv6",
+			fwd:  `for="2607:f8b0:4004:83f::999999"`,
+			want: nil,
+		},
+		{
+			name: "Error: non-IP identifier",
+			fwd:  `for="_test"`,
+			want: nil,
+		},
+		{
+			name: "Error: empty IP value",
+			fwd:  `for=`,
+			want: nil,
+		},
+		{
+			name: "Multiple IPv4 directives",
+			fwd:  `by=1.1.1.1; for=2.2.2.2;host=myhost; proto=https`,
+			want: mustParseIPAddrPtr("2.2.2.2"),
+		},
+		{
+			// RFC deviation: missing quotes around IPv6
+			name: "Multiple IPv6 directives",
+			fwd:  `by=1::1;host=myhost;for=2::2;proto=https`,
+			want: mustParseIPAddrPtr("2::2"),
+		},
+		{
+			// RFC deviation: missing quotes around IPv6
+			name: "Multiple mixed directives",
+			fwd:  `by=1::1;host=myhost;proto=https;for=2.2.2.2`,
+			want: mustParseIPAddrPtr("2.2.2.2"),
+		},
+		{
+			name: "IPv4-mapped IPv6",
+			fwd:  `for="[::ffff:188.0.2.128]"`,
+			want: mustParseIPAddrPtr("188.0.2.128"),
+		},
+		{
+			name: "IPv4-mapped IPv6 with port and quotes",
+			fwd:  `for="[::ffff:188.0.2.128]:49428"`,
+			want: mustParseIPAddrPtr("188.0.2.128"),
+		},
+		{
+			name: "IPv4-mapped IPv6 in IPv6 form",
+			fwd:  `for="[0:0:0:0:0:ffff:bc15:0006]"`,
+			want: mustParseIPAddrPtr("188.21.0.6"),
+		},
+		{
+			name: "NAT64 IPv4-mapped IPv6",
+			fwd:  `for="[64:ff9b::188.0.2.128]"`,
+			want: mustParseIPAddrPtr("64:ff9b::188.0.2.128"),
+		},
+		{
+			name: "IPv4 loopback",
+			fwd:  `for=127.0.0.1`,
+			want: mustParseIPAddrPtr("127.0.0.1"),
+		},
+		{
+			name: "IPv6 loopback",
+			fwd:  `for="[::1]"`,
+			want: mustParseIPAddrPtr("::1"),
+		},
+		{
+			// RFC deviation: quotes must be matched
+			name: "Error: Unmatched quote",
+			fwd:  `for="1.1.1.1`,
+			want: nil,
+		},
+		{
+			// RFC deviation: brackets must be matched
+			name: "Error: IPv6 loopback",
+			fwd:  `for="::1]"`,
+			want: nil,
+		},
+		{
+			name: "Error: misplaced quote",
+			fwd:  `for="[0:0:0:0:0:ffff:bc15:0006"]`,
+			want: nil,
+		},
+		{
+			name: "Error: garbage",
+			fwd:  "ads\x00jkl&#*(383fdljk",
+			want: nil,
+		},
+		{
+			// Per RFC 7230 section 3.2.6, this should not be an error, but we don't have
+			// full syntax support yet.
+			name: "RFC deviation: quoted pair",
+			fwd:  `for=1.1.1.\1`,
+			want: nil,
+		},
+		{
+			// Per RFC 7239, this extraneous whitespace should be an error, but we don't
+			// have full syntax support yet.
+			name: "RFC deviation: Incorrect whitespace",
+			fwd:  `for= 1.1.1.1`,
+			want: mustParseIPAddrPtr("1.1.1.1"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseForwardedListItem(tt.fwd)
+
+			if got == nil || tt.want == nil {
+				if got != tt.want {
+					t.Fatalf("parseForwardedListItem() = %v, want %v", got, tt.want)
+				}
+				return
+			}
+
+			if !ipAddrsEqual(*got, *tt.want) {
+				t.Fatalf("parseForwardedListItem() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 // Demonstrate parsing deviations from Forwarded header syntax RFCs, particularly
