@@ -1,6 +1,6 @@
 package ranges
 
-// Cloudflare is Cloudflare's internet IP ranges.
+// Cloudflare's internet IP ranges.
 // It is taken from: https://www.cloudflare.com/ips/.
 // As an alternative, and to ensure up-to-date results, use the Cloudflare API to retrieve
 // these ranges at runtime: https://api.cloudflare.com/#cloudflare-ips-properties
