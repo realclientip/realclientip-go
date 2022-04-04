@@ -18,28 +18,28 @@ func Example_playground() {
 	var strat realclientip.Strategy
 
 	strat = realclientip.RemoteAddrStrategy{}
-	fmt.Printf("\n%+v\n", strat)
+	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 192.168.1.2
 
 	strat, _ = realclientip.NewSingleIPHeaderStrategy("X-Real-IP")
-	fmt.Printf("\n%+v\n", strat)
+	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 4.4.4.4
 
 	strat, _ = realclientip.NewLeftmostNonPrivateStrategy("Forwarded")
-	fmt.Printf("\n%+v\n", strat)
+	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 188.0.2.128
 
 	strat, _ = realclientip.NewRightmostNonPrivateStrategy("X-Forwarded-For")
-	fmt.Printf("\n%+v\n", strat)
+	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 3.3.3.3
 
 	strat, _ = realclientip.NewRightmostTrustedCountStrategy("Forwarded", 2)
-	fmt.Printf("\n%+v\n", strat)
+	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 2001:db8:cafe::17
 
 	trustedRanges, _ := realclientip.AddressesAndRangesToIPNets([]string{"192.168.0.0/16", "3.3.3.3"}...)
 	strat, _ = realclientip.NewRightmostTrustedRangeStrategy("X-Forwarded-For", trustedRanges)
-	fmt.Printf("\n%+v\n", strat)
+	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 2001:db8:cafe::99%eth0
 	ipAddr, _ := realclientip.ParseIPAddr(strat.ClientIP(req.Header, req.RemoteAddr))
 	fmt.Println(ipAddr.IP) // 2001:db8:cafe::99
@@ -48,29 +48,29 @@ func Example_playground() {
 		realclientip.Must(realclientip.NewSingleIPHeaderStrategy("Cf-Connecting-IP")),
 		realclientip.RemoteAddrStrategy{},
 	)
-	fmt.Printf("\n%+v\n", strat)
+	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 192.168.1.2
 
 	// Output:
-	// {}
+	// realclientip.RemoteAddrStrategy: {}
 	// 192.168.1.2
 	//
-	// {headerName:X-Real-Ip}
+	// realclientip.SingleIPHeaderStrategy: {headerName:X-Real-Ip}
 	// 4.4.4.4
 	//
-	// {headerName:Forwarded}
+	// realclientip.LeftmostNonPrivateStrategy: {headerName:Forwarded}
 	// 188.0.2.128
 	//
-	// {headerName:X-Forwarded-For}
+	// realclientip.RightmostNonPrivateStrategy: {headerName:X-Forwarded-For}
 	// 3.3.3.3
 	//
-	// {headerName:Forwarded trustedCount:2}
+	// realclientip.RightmostTrustedCountStrategy: {headerName:Forwarded trustedCount:2}
 	// 2001:db8:cafe::17
 	//
-	// {headerName:X-Forwarded-For trustedRanges:[192.168.0.0/16 3.3.3.3/32]
+	// realclientip.RightmostTrustedRangeStrategy: {headerName:X-Forwarded-For trustedRanges:[192.168.0.0/16 3.3.3.3/32]
 	// 2001:db8:cafe::99%eth0
 	// 2001:db8:cafe::99
 	//
-	// {strategies:[realclientip.SingleIPHeaderStrategy{headerName:Cf-Connecting-Ip} realclientip.RemoteAddrStrategy{}]}
+	// realclientip.ChainStrategy: {strategies:[realclientip.SingleIPHeaderStrategy{headerName:Cf-Connecting-Ip} realclientip.RemoteAddrStrategy{}]}
 	// 192.168.1.2
 }
