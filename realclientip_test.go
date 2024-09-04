@@ -2034,7 +2034,11 @@ func Test_forwardedHeaderRFCDeviations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := getIPAddrList(tt.args.headers, tt.args.headerName); !reflect.DeepEqual(got, tt.want) {
+			var got []*net.IPAddr
+			for ip := range allIPAddrFromFirstToLast(tt.args.headers, tt.args.headerName) {
+				got = append(got, ip)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("getIPAddrList() = %v, want %v", got, tt.want)
 			}
 		})
