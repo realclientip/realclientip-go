@@ -1,6 +1,6 @@
 module github.com/realclientip/realclientip-go/_examples/tollbooth
 
-go 1.18
+go 1.21
 
 replace github.com/realclientip/realclientip-go => ../..
 

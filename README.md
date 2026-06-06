@@ -12,7 +12,7 @@
 
 This library is written in Go, but the hope is that it will be reimplemented in other languages. Please open an issue if you would like to create such an implementation.
 
-This library is freely licensed. You may use it as a dependency or copy it or modify it or anything else you want. It has no dependencies, is written in pure Go, and supports Go versions as far back as 1.13.
+This library is freely licensed. You may use it as a dependency or copy it or modify it or anything else you want. It has no dependencies, is written in pure Go, and supports Go versions as far back as 1.21.
 
 ## Usage
 
