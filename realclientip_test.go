@@ -1634,6 +1634,11 @@ func Test_isPrivateOrLocal(t *testing.T) {
 		want bool
 	}{
 		{
+			name: "bad (null) IP",
+			ip:   `nope`,
+			want: false,
+		},
+		{
 			name: "IPv4 loopback",
 			ip:   `127.0.0.2`,
 			want: true,
@@ -1682,9 +1687,6 @@ func Test_isPrivateOrLocal(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ip := net.ParseIP(tt.ip)
-			if ip == nil {
-				t.Fatalf("net.ParseIP failed; bad test input")
-			}
 			if got := isPrivateOrLocal(ip); got != tt.want {
 				t.Fatalf("isPrivateOrLocal() = %v, want %v", got, tt.want)
 			}
@@ -1855,14 +1857,12 @@ func Test_parseForwardedListItem(t *testing.T) {
 			want: mustParseIPAddrPtr("::1"),
 		},
 		{
-			// RFC deviation: quotes must be matched
 			name: "Error: Unmatched quote",
 			fwd:  `for="1.1.1.1`,
 			want: nil,
 		},
 		{
-			// RFC deviation: brackets must be matched
-			name: "Error: IPv6 loopback",
+			name: "Error: unmatched bracket",
 			fwd:  `for="::1]"`,
 			want: nil,
 		},

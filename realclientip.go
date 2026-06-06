@@ -42,7 +42,8 @@ func Must(strat Strategy, err error) Strategy {
 // strategies are exhausted.
 // A common use for this is if a server is both directly connected to the internet and
 // expecting a header to check. It might be called like:
-//   NewChainStrategy(Must(LeftmostNonPrivateStrategy("X-Forwarded-For")), RemoteAddrStrategy)
+//
+//	NewChainStrategy(Must(LeftmostNonPrivateStrategy("X-Forwarded-For")), RemoteAddrStrategy)
 type ChainStrategy struct {
 	strategies []Strategy
 }
@@ -138,7 +139,7 @@ func (strat SingleIPHeaderStrategy) ClientIP(headers http.Header, _ string) stri
 	// RFC 2616 does not allow multiple instances of single-IP headers (or any non-list header).
 	// It is debatable whether it is better to treat multiple such headers as an error
 	// (more correct) or simply pick one of them (more flexible). As we've already
-	// told the user tom make sure the header is not spoofable, we're going to use the
+	// told the user to make sure the header is not spoofable, we're going to use the
 	// last header instance if there are multiple. (Using the last is arbitrary, but
 	// in theory it should be the newest value.)
 	ipStr := lastHeader(headers, strat.headerName)
@@ -657,6 +658,10 @@ var privateAndLocalRanges = []net.IPNet{
 
 // isIPContainedInRanges returns true if the given IP is contained in at least one of the given ranges
 func isIPContainedInRanges(ip net.IP, ranges []net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+
 	for _, r := range ranges {
 		if r.Contains(ip) {
 			return true
