@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"unicode"
 )
 
 // Strategy is satisfied by all of the specific strategies in this package. It can be used
@@ -560,6 +561,14 @@ func ParseIPAddr(ipStr string) (net.IPAddr, error) {
 	ipStr = trimMatchedEnds(ipStr, "[]")
 
 	ipStr, zone := SplitHostZone(ipStr)
+
+	// A zone containing whitespace is malformed and would produce non-canonical
+	// output that doesn't round-trip. This can arise from input like "ip% :":
+	// net.SplitHostPort treats the trailing ":" as an empty port and leaves a
+	// trailing space on the host, which SplitHostZone then captures as the zone.
+	if strings.ContainsFunc(zone, unicode.IsSpace) {
+		return net.IPAddr{}, fmt.Errorf("zone contains whitespace")
+	}
 
 	res := net.IPAddr{
 		IP:   net.ParseIP(ipStr),
