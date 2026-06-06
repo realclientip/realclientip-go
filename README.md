@@ -82,9 +82,26 @@ There is a copy of [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) und
 
 ### `net` vs `netip`
 
-At the time of writing this library, Go 1.18 was only just released. It made sense to use the older `net` package rather than the newer `netip`, so that the required Go version wouldn't be so high as to exclude some users of the library.
+This library uses the older `net` package (`net.IP`, `net.IPAddr`, `net.IPNet`) rather than the newer [`netip`](https://pkg.go.dev/net/netip) (`netip.Addr`, `netip.Prefix`).
 
-In the future we may wish to switch to using `netip`, but it will require API changes to `AddressesAndRangesToIPNets`, `RightmostTrustedRangeStrategy`, and `ParseIPAddr`.
+When the library was first written, Go 1.18 had only just been released, and `netip` along with it. Using `net` kept the required Go version low enough not to exclude users. That rationale no longer applies (the minimum is now 1.21), but we're staying on `net` for now anyway:
+
+* Switching to `netip` would change the signatures of `ParseIPAddr`, `MustParseIPAddr`, `AddressesAndRangesToIPNets`, and `NewRightmostTrustedRangeStrategy`. That is a breaking change, which would require a v2 module (`.../v2`) and force every user to update their imports.
+* The benefit is limited. The strategies return a normalized, canonical IP _string_, so callers who want a `netip.Addr` can convert the result in one line (see below). Being string-typed at its boundary makes the library representation-agnostic.
+
+We expect to move to `netip` if and when a v2 is justified for other reasons; bundling it in then makes the migration nearly free. At that point we would likely also embrace `netip`'s stricter parsing -- it rejects brackets, ports, and IPv4 zones -- and tighten the [input strictness](#input-format-strictness) accordingly.
+
+#### Converting output to `netip`
+
+Because the returned IP string is canonical, you can parse it directly into a `netip.Addr`:
+
+```golang
+ip := strategy.ClientIP(req.Header, req.RemoteAddr)
+if ip == "" {
+    // The strategy failed; handle as an error.
+}
+addr, err := netip.ParseAddr(ip)
+```
 
 ### Disallowed valid IPs
 
