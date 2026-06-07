@@ -562,12 +562,13 @@ func ParseIPAddr(ipStr string) (net.IPAddr, error) {
 
 	ipStr, zone := SplitHostZone(ipStr)
 
-	// A zone containing whitespace is malformed and would produce non-canonical
-	// output that doesn't round-trip. This can arise from input like "ip% :":
-	// net.SplitHostPort treats the trailing ":" as an empty port and leaves a
-	// trailing space on the host, which SplitHostZone then captures as the zone.
-	if strings.ContainsFunc(zone, unicode.IsSpace) {
-		return net.IPAddr{}, fmt.Errorf("zone contains whitespace")
+	// A zone containing whitespace or address-structural characters is malformed
+	// and would produce non-canonical output that doesn't round-trip. Examples:
+	// "ip% :" (net.SplitHostPort treats the trailing ":" as an empty port and
+	// leaves a trailing space on the host, captured here as the zone) and
+	// "::ffff:0:1%:" (collapses to a v4 form whose ":" reparses as a port).
+	if strings.ContainsAny(zone, ":/[]") || strings.ContainsFunc(zone, unicode.IsSpace) {
+		return net.IPAddr{}, fmt.Errorf("zone contains invalid characters")
 	}
 
 	res := net.IPAddr{
