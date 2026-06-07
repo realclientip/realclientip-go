@@ -1,0 +1,63 @@
+name: Ranges drift
+
+# Regenerates the bundled provider IP ranges from their published sources and,
+# if they have drifted from what's committed, opens (or updates) a PR with the
+# refresh. The bundled ranges are static snapshots; this keeps them from
+# silently rotting. See ranges/doc.go for why staleness is a security concern.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'   # weekly, Mondays 07:00 UTC
+  workflow_dispatch: {}    # manual run (also a keepalive: GitHub disables
+                           # scheduled workflows after 60 days of repo inactivity)
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: chore/ranges-refresh
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      # Fetches the providers' live lists and rewrites the generated files.
+      - name: Regenerate ranges
+        run: go generate ./ranges/...
+
+      - name: Detect drift
+        id: drift
+        run: |
+          if git diff --quiet -- ranges/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Push the regenerated files to a fixed branch and open a PR if one isn't
+      # already open. Reusing the branch means re-runs update the existing PR
+      # instead of spawning duplicates. (A GITHUB_TOKEN push does not trigger
+      # other workflows, so the test workflow won't run on this PR; review the
+      # data diff and re-run tests locally if needed before merging.)
+      - name: Open or update PR
+        if: steps.drift.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$BRANCH"
+          git add ranges/cloudflare.go ranges/cloudfront.go
+          git commit -m 'chore(ranges): refresh bundled provider IP ranges'
+          git push -f origin "$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --base main --head "$BRANCH" \
+              --title 'chore(ranges): refresh bundled provider IP ranges' \
+              --body 'Automated refresh of the bundled Cloudflare/CloudFront IP ranges from their published sources. Review the diff and merge if it looks right. See ranges/doc.go for context.'
+          fi

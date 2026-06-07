@@ -1,0 +1,217 @@
+// Command gen regenerates the bundled provider IP-range files (cloudflare.go,
+// cloudfront.go) from the providers' published sources.
+//
+// It is invoked via `go generate ./ranges/...` and by the ranges-drift CI
+// workflow. It fetches live data, so it requires network access. On any
+// fetch/parse error it exits non-zero without touching the output files.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"go/format"
+	"io"
+	"net/http"
+	"net/netip"
+	"os"
+	"sort"
+	"strings"
+	"time"
+)
+
+const (
+	cloudflareV4URL = "https://www.cloudflare.com/ips-v4"
+	cloudflareV6URL = "https://www.cloudflare.com/ips-v6"
+	awsRangesURL    = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+)
+
+const cloudflareDoc = `// Cloudflare's published IP ranges.
+//
+// Source: ` + cloudflareV4URL + ` and ` + cloudflareV6URL + `
+//
+// SECURITY: this is a static snapshot; see the package documentation for why a
+// stale list is risky. For guaranteed-current ranges, use the Cloudflare API:
+// https://api.cloudflare.com/#cloudflare-ips-properties
+`
+
+const cloudFrontDoc = `// AWS CloudFront's published IP ranges (IPv4 and IPv6).
+//
+// Source: ` + awsRangesURL + ` (entries where service == "CLOUDFRONT")
+//
+// SECURITY: this is a static snapshot; see the package documentation for why a
+// stale list is risky. For origin allowlisting, prefer the AWS-managed prefix
+// list "com.amazonaws.global.cloudfront.origin-facing", which is narrower than
+// this full CloudFront set and available via the EC2 API.
+`
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "gen: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cloudflare, err := cloudflareRanges()
+	if err != nil {
+		return fmt.Errorf("cloudflare: %w", err)
+	}
+	cloudfront, err := cloudFrontRanges()
+	if err != nil {
+		return fmt.Errorf("cloudfront: %w", err)
+	}
+
+	if err := writeFile("cloudflare.go", "Cloudflare", cloudflareDoc, cloudflare); err != nil {
+		return err
+	}
+	return writeFile("cloudfront.go", "CloudFront", cloudFrontDoc, cloudfront)
+}
+
+func httpGet(url string) ([]byte, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: status %s", url, resp.Status)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// cloudflareRanges fetches Cloudflare's plain-text IPv4 and IPv6 lists (one
+// CIDR per line).
+func cloudflareRanges() ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, url := range []string{cloudflareV4URL, cloudflareV6URL} {
+		body, err := httpGet(url)
+		if err != nil {
+			return nil, err
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			p, err := netip.ParsePrefix(line)
+			if err != nil {
+				return nil, fmt.Errorf("parse %q from %s: %w", line, url, err)
+			}
+			prefixes = append(prefixes, p)
+		}
+	}
+	if len(prefixes) == 0 {
+		return nil, fmt.Errorf("no prefixes found")
+	}
+	return prefixes, nil
+}
+
+// cloudFrontRanges fetches the canonical AWS ip-ranges.json and keeps the
+// entries whose service is "CLOUDFRONT" (both IPv4 and IPv6).
+func cloudFrontRanges() ([]netip.Prefix, error) {
+	body, err := httpGet(awsRangesURL)
+	if err != nil {
+		return nil, err
+	}
+
+	var doc struct {
+		Prefixes []struct {
+			IPPrefix string `json:"ip_prefix"`
+			Service  string `json:"service"`
+		} `json:"prefixes"`
+		IPv6Prefixes []struct {
+			IPv6Prefix string `json:"ipv6_prefix"`
+			Service    string `json:"service"`
+		} `json:"ipv6_prefixes"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+
+	var prefixes []netip.Prefix
+	for _, p := range doc.Prefixes {
+		if p.Service != "CLOUDFRONT" {
+			continue
+		}
+		pre, err := netip.ParsePrefix(p.IPPrefix)
+		if err != nil {
+			return nil, fmt.Errorf("parse %q: %w", p.IPPrefix, err)
+		}
+		prefixes = append(prefixes, pre)
+	}
+	for _, p := range doc.IPv6Prefixes {
+		if p.Service != "CLOUDFRONT" {
+			continue
+		}
+		pre, err := netip.ParsePrefix(p.IPv6Prefix)
+		if err != nil {
+			return nil, fmt.Errorf("parse %q: %w", p.IPv6Prefix, err)
+		}
+		prefixes = append(prefixes, pre)
+	}
+	if len(prefixes) == 0 {
+		return nil, fmt.Errorf("no CLOUDFRONT prefixes found")
+	}
+	return prefixes, nil
+}
+
+// writeFile renders prefixes into a generated Go source file. Prefixes are
+// canonicalized (masked), de-duplicated, split into IPv4/IPv6 sections, and
+// sorted within each section, so that drift produces a minimal, reviewable diff.
+func writeFile(path, varName, doc string, prefixes []netip.Prefix) error {
+	seen := make(map[netip.Prefix]bool)
+	var v4, v6 []netip.Prefix
+	for _, p := range prefixes {
+		p = p.Masked()
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		if p.Addr().Is4() {
+			v4 = append(v4, p)
+		} else {
+			v6 = append(v6, p)
+		}
+	}
+	sortPrefixes(v4)
+	sortPrefixes(v6)
+
+	var b strings.Builder
+	b.WriteString("// Code generated by ranges/internal/gen; DO NOT EDIT.\n")
+	b.WriteString("// To refresh, run: go generate ./ranges/...\n\n")
+	b.WriteString("package ranges\n\n")
+	b.WriteString(doc)
+	fmt.Fprintf(&b, "var %s = []string{\n", varName)
+	if len(v4) > 0 {
+		b.WriteString("\t// IPv4\n")
+		for _, p := range v4 {
+			fmt.Fprintf(&b, "\t%q,\n", p.String())
+		}
+	}
+	if len(v6) > 0 {
+		if len(v4) > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("\t// IPv6\n")
+		for _, p := range v6 {
+			fmt.Fprintf(&b, "\t%q,\n", p.String())
+		}
+	}
+	b.WriteString("}\n")
+
+	formatted, err := format.Source([]byte(b.String()))
+	if err != nil {
+		return fmt.Errorf("format %s: %w", path, err)
+	}
+	return os.WriteFile(path, formatted, 0o644)
+}
+
+func sortPrefixes(ps []netip.Prefix) {
+	sort.Slice(ps, func(i, j int) bool {
+		if c := ps[i].Addr().Compare(ps[j].Addr()); c != 0 {
+			return c < 0
+		}
+		return ps[i].Bits() < ps[j].Bits()
+	})
+}
