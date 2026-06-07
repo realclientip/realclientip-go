@@ -648,7 +648,7 @@ var privateAndLocalRanges = []net.IPNet{
 	mustParseCIDR("198.51.100.0/24"),    // Assigned as TEST-NET-2
 	mustParseCIDR("203.0.113.0/24"),     // Assigned as TEST-NET-3
 	mustParseCIDR("192.88.99.0/24"),     // RFC 3068
-	mustParseCIDR("192.18.0.0/15"),      // RFC 2544
+	mustParseCIDR("198.18.0.0/15"),      // RFC 2544
 	mustParseCIDR("224.0.0.0/4"),        // RFC 3171
 	mustParseCIDR("240.0.0.0/4"),        // RFC 1112
 	mustParseCIDR("255.255.255.255/32"), // RFC 919 Section 7

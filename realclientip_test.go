@@ -1683,6 +1683,19 @@ func Test_isPrivateOrLocal(t *testing.T) {
 			ip:   `::ffff:188.0.2.128`,
 			want: false,
 		},
+		{
+			// RFC 2544 benchmarking range is 198.18.0.0/15.
+			name: "IPv4 RFC 2544 benchmarking",
+			ip:   `198.18.5.5`,
+			want: true,
+		},
+		{
+			// 192.18.0.0/15 is routable public space, not a reserved range.
+			// Guards against the 198.18/192.18 typo (see issue #8).
+			name: "IPv4 192.18.0.0/15 is public",
+			ip:   `192.18.5.5`,
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
