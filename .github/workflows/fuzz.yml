@@ -24,9 +24,9 @@ jobs:
           - Fuzz_parseForwardedListItem
           - Fuzz_ClientIP_XFF
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
 
@@ -35,7 +35,7 @@ jobs:
       # rolling cache (unique key per run + restore-keys prefix) makes runs
       # cumulative, since actions/cache entries are immutable per key.
       - name: Restore fuzz corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/go-build/fuzz
           key: fuzz-${{ matrix.target }}-${{ github.run_id }}
@@ -49,7 +49,7 @@ jobs:
       # the finding into a permanent regression seed.
       - name: Upload reproducer
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-failure-${{ matrix.target }}
           path: testdata/fuzz/
