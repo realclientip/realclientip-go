@@ -56,6 +56,12 @@ Do not abuse `ChainStrategy` to check multiple headers. There is likely only one
 
 [single-ip-wiki]: https://github.com/realclientip/realclientip-go/wiki/Single-IP-Headers
 
+### Servers reachable both directly and via a proxy
+
+If your server can be reached *both* through your reverse proxy *and* directly from the internet, a header-based strategy can be tricked: an attacker connecting directly can send a forged `X-Forwarded-For`/`Forwarded` header. The defense is to confirm the connecting peer (`remoteAddr`) is actually one of your proxies before trusting the header.
+
+`RightmostTrustedRangeStrategy` does this for you. It checks `remoteAddr` against its trusted ranges; if the peer is a valid IP that isn't trusted, the request didn't arrive through a proxy, so the header is ignored and the (unspoofable) peer is returned. A non-IP peer such as a Unix-domain socket is treated as local and the header is honored. The other strategies don't have the trusted-range information to do this, so if you use them in a directly-reachable deployment you must verify `remoteAddr` belongs to a trusted proxy yourself.
+
 #### `Forwarded` header support
 
 Support for the [`Forwarded` header] should be sufficient for the vast majority of rightmost-ish uses, but it is not complete and doesn't completely adhere  to [RFC 7239]. See the [`Test_forwardedHeaderRFCDeviations`] test for details on deviations.

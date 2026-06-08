@@ -56,32 +56,34 @@ func Fuzz_parseForwardedListItem(f *testing.F) {
 	})
 }
 
-// Fuzz_ClientIP_XFF feeds arbitrary X-Forwarded-For header values through the
-// XFF-based strategies and checks invariants that are independent of how the
-// strategies compute their answer -- genuine oracles rather than a
-// reimplementation of the walk:
+// Fuzz_ClientIP_XFF feeds arbitrary X-Forwarded-For header values and arbitrary
+// remoteAddr values through the XFF-based strategies and checks invariants that
+// are independent of how the strategies compute their answer -- genuine oracles
+// rather than a reimplementation of the walk:
 //
 //   - Any non-empty result is a valid IP that round-trips: re-parsing and
 //     re-stringifying it yields the identical string (the library promises
 //     normalized, canonical output).
-//   - Feeding a non-empty result straight back in as the whole header yields
-//     the same result (idempotence of the full strategy).
+//   - Feeding a non-empty result back in as the whole header, with the same
+//     remoteAddr, yields the same result (idempotence of the full strategy).
 //   - LeftmostNonPrivate / RightmostNonPrivate never return a private/local IP.
-//   - RightmostTrustedRange never returns an IP inside a trusted range.
+//   - RightmostTrustedRange never returns an IP inside a trusted range -- which
+//     must hold whether the result came from the header or from the verified
+//     peer (remoteAddr).
 func Fuzz_ClientIP_XFF(f *testing.F) {
-	seeds := []string{
-		"1.1.1.1",
-		"1.1.1.1, 2.2.2.2",
-		"10.0.0.1, 192.168.1.1, 3.3.3.3",
-		"::1, 2607:f8b0:4004:83f::200e",
-		"  fe80::1%eth0 , 4.4.4.4 ",
-		"not-an-ip, 5.5.5.5",
-		"1.1.1.1,,2.2.2.2",
-		"::ffff:188.0.2.128",
-		"",
+	seeds := []struct{ xff, remoteAddr string }{
+		{"1.1.1.1", ""},
+		{"1.1.1.1, 2.2.2.2", "10.0.0.1:80"},                // trusted peer
+		{"10.0.0.1, 192.168.1.1, 3.3.3.3", "9.9.9.9:1234"}, // untrusted peer
+		{"::1, 2607:f8b0:4004:83f::200e", "@"},             // Unix-socket peer
+		{"  fe80::1%eth0 , 4.4.4.4 ", "[fe80::1%eth0]:9"},
+		{"not-an-ip, 5.5.5.5", "ohno"}, // unparseable peer
+		{"1.1.1.1,,2.2.2.2", "[2607:f8b0::1]:443"},
+		{"::ffff:188.0.2.128", "192.168.1.1:5"},
+		{"", "9.9.9.9"},
 	}
 	for _, s := range seeds {
-		f.Add(s)
+		f.Add(s.xff, s.remoteAddr)
 	}
 
 	trustedRanges, err := AddressesAndRangesToIPNets("10.0.0.0/8", "192.168.0.0/16", "fc00::/7")
@@ -113,9 +115,9 @@ func Fuzz_ClientIP_XFF(f *testing.F) {
 		{trusted, func(ip net.IP) bool { return !isIPContainedInRanges(ip, trustedRanges) }, "outside-trusted-ranges"},
 	}
 
-	f.Fuzz(func(t *testing.T, xff string) {
+	f.Fuzz(func(t *testing.T, xff, remoteAddr string) {
 		for _, c := range cases {
-			result := c.strat.ClientIP(http.Header{xForwardedForHdr: []string{xff}}, "")
+			result := c.strat.ClientIP(http.Header{xForwardedForHdr: []string{xff}}, remoteAddr)
 			if result == "" {
 				continue
 			}
@@ -123,21 +125,24 @@ func Fuzz_ClientIP_XFF(f *testing.F) {
 			// Must be a valid, canonical IP.
 			ipAddr, err := ParseIPAddr(result)
 			if err != nil {
-				t.Fatalf("%T returned unparseable %q from XFF %q", c.strat, result, xff)
+				t.Fatalf("%T returned unparseable %q from XFF %q remoteAddr %q", c.strat, result, xff, remoteAddr)
 			}
 			if ipAddr.String() != result {
 				t.Fatalf("%T result %q is not canonical (re-stringifies to %q)", c.strat, result, ipAddr.String())
 			}
 
-			// Post-condition for this strategy.
+			// Post-condition for this strategy. For RightmostTrustedRange this also
+			// covers the peer path: whether the result comes from remoteAddr or from
+			// the header, it must still be outside the trusted ranges.
 			if !c.postcond(ipAddr.IP) {
-				t.Fatalf("%T result %q violates %s (XFF %q)", c.strat, result, c.condName, xff)
+				t.Fatalf("%T result %q violates %s (XFF %q remoteAddr %q)", c.strat, result, c.condName, xff, remoteAddr)
 			}
 
-			// Idempotence: feeding the result back as the whole header yields it.
-			back := c.strat.ClientIP(http.Header{xForwardedForHdr: []string{result}}, "")
+			// Idempotence: feeding the result back as the whole header, with the same
+			// remoteAddr, yields it.
+			back := c.strat.ClientIP(http.Header{xForwardedForHdr: []string{result}}, remoteAddr)
 			if back != result {
-				t.Fatalf("%T not idempotent: %q -> %q", c.strat, result, back)
+				t.Fatalf("%T not idempotent: %q -> %q (remoteAddr %q)", c.strat, result, back, remoteAddr)
 			}
 		}
 	})
