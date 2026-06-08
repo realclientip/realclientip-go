@@ -358,6 +358,14 @@ func AddressesAndRangesToIPNets(ranges ...string) ([]net.IPNet, error) {
 // in the X-Forwarded-For or Forwarded header which is not in a set of trusted IP ranges.
 // This strategy should be used when the IP ranges of the reverse proxies between the
 // internet and the server are known.
+//
+// This strategy also verifies the connecting peer (remoteAddr): if the peer is a valid IP
+// that is not in the trusted ranges, the request did not arrive through a trusted proxy,
+// the header is untrustworthy, and the peer itself is returned. This makes the strategy
+// safe to use on a server that is reachable both through a trusted proxy and directly (an
+// attacker connecting directly cannot spoof the client IP via a forged header). See
+// ClientIP for the exact peer-handling rules.
+//
 // If a third-party WAF, CDN, etc., is used, you SHOULD use a method of verifying its
 // access to your origin that is stronger than checking its IP address (e.g., using
 // authenticated pulls). Failure to do so can result in scenarios like:
@@ -392,9 +400,32 @@ func NewRightmostTrustedRangeStrategy(headerName string, trustedRanges []net.IPN
 
 // ClientIP derives the client IP using this strategy.
 // headers is expected to be like http.Request.Header.
+// remoteAddr is expected to be like http.Request.RemoteAddr.
 // The returned IP may contain a zone identifier.
 // If no valid IP can be derived, empty string will be returned.
-func (strat RightmostTrustedRangeStrategy) ClientIP(headers http.Header, _ string) string {
+//
+// The connecting peer (remoteAddr) is checked first:
+//   - If remoteAddr is a valid IP that is NOT in the trusted ranges, the request did not
+//     arrive through a trusted proxy. The header cannot be trusted, so it is ignored and
+//     remoteAddr is returned (it is the rightmost untrusted address). This both defeats
+//     header spoofing by a directly-connecting attacker and yields the correct IP for a
+//     legitimate client connecting directly.
+//   - If remoteAddr is a valid IP that IS in the trusted ranges, it is a trusted proxy and
+//     the header is walked as normal.
+//   - If remoteAddr is not a usable IP (empty, a Unix-domain-socket peer like "@", or
+//     otherwise unparseable), the peer cannot be classified and the header is walked as
+//     normal. This keeps legitimate local-socket topologies working (for example,
+//     client -> CDN -> nginx -(unix socket)-> app); a Unix socket is unreachable from the
+//     network and so cannot be a spoofing vector. To get peer verification, pass a real
+//     remoteAddr (as http.Request.RemoteAddr always provides for network connections).
+func (strat RightmostTrustedRangeStrategy) ClientIP(headers http.Header, remoteAddr string) string {
+	// If the connecting peer is a valid IP outside our trusted ranges, the request did not
+	// come through a trusted proxy; the header is untrustworthy and the peer is the
+	// rightmost untrusted address, so return it.
+	if peer := goodIPAddr(remoteAddr); peer != nil && !isIPContainedInRanges(peer.IP, strat.trustedRanges) {
+		return peer.String()
+	}
+
 	ipAddrs := getIPAddrList(headers, strat.headerName)
 	// Look backwards through the list of IP addresses
 	for i := len(ipAddrs) - 1; i >= 0; i-- {

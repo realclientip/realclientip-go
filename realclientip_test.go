@@ -1277,6 +1277,112 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 			want: "4.4.4.4",
 		},
 		{
+			// Peer is a valid IP outside the trusted ranges: the request did not
+			// arrive through a trusted proxy, so the (spoofed) header is ignored and
+			// the peer is returned -- NOT the victim the header tries to inject.
+			name: "Peer untrusted: returns peer, ignores spoofed header",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{`1.2.3.4, 10.0.0.1`},
+				},
+				remoteAddr:    "9.9.9.9:1234",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "9.9.9.9",
+		},
+		{
+			// The direct-client case from issue #4: untrusted peer, no header.
+			name: "Peer untrusted, no header: returns peer",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{},
+				},
+				remoteAddr:    "9.9.9.9",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "9.9.9.9",
+		},
+		{
+			// Untrusted IPv6 peer with a zone is returned canonically, zone retained.
+			name: "Peer untrusted IPv6 with zone: returns peer with zone",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{`1.2.3.4`},
+				},
+				remoteAddr:    "[fe80::1%eth0]:9999",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "fe80::1%eth0",
+		},
+		{
+			// Trusted peer: behaves exactly as the header-only walk (regression guard
+			// that normal proxy deployments are unaffected by peer verification).
+			name: "Peer trusted: walks header as normal",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 10.0.0.1`},
+				},
+				remoteAddr:    "10.0.0.5:555",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "3.3.3.3",
+		},
+		{
+			// Unix-domain-socket peer ("@") is not an IP; fall through to the header.
+			name: "Peer Unix socket: walks header as normal",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 10.0.0.1`},
+				},
+				remoteAddr:    "@",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "3.3.3.3",
+		},
+		{
+			name: "Peer empty: walks header as normal",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 10.0.0.1`},
+				},
+				remoteAddr:    "",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "3.3.3.3",
+		},
+		{
+			name: "Peer garbage: walks header as normal",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 10.0.0.1`},
+				},
+				remoteAddr:    "ohno",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "3.3.3.3",
+		},
+		{
+			// Unspecified peer IP (0.0.0.0) is rejected by goodIPAddr, so we cannot
+			// classify it and fall through to the header.
+			name: "Peer unspecified IP: walks header as normal",
+			args: args{
+				headerName: "X-Forwarded-For",
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 10.0.0.1`},
+				},
+				remoteAddr:    "0.0.0.0",
+				trustedRanges: []string{`10.0.0.0/8`},
+			},
+			want: "3.3.3.3",
+		},
+		{
 			name: "Fail: no non-trusted IP",
 			args: args{
 				headerName: "X-Forwarded-For",
