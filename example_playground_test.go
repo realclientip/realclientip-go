@@ -51,6 +51,16 @@ func Example_playground() {
 	fmt.Printf("\n%T: %+v\n", strat, strat)
 	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 192.168.1.2
 
+	// The peer (192.168.1.2) is in trustedRanges, so the request is treated as proxied and
+	// the inner strategy is consulted. Had it come from an untrusted IP, the gate would
+	// return "" without trusting the header.
+	strat = realclientip.Must(realclientip.NewTrustedPeerStrategy(
+		trustedRanges,
+		realclientip.Must(realclientip.NewRightmostTrustedCountStrategy("Forwarded", 2)),
+	))
+	fmt.Printf("\n%T: %+v\n", strat, strat)
+	fmt.Println(strat.ClientIP(req.Header, req.RemoteAddr)) // 2001:db8:cafe::17
+
 	// Output:
 	// realclientip.RemoteAddrStrategy: {}
 	// 192.168.1.2
@@ -67,10 +77,13 @@ func Example_playground() {
 	// realclientip.RightmostTrustedCountStrategy: {headerName:Forwarded trustedCount:2}
 	// 2001:db8:cafe::17
 	//
-	// realclientip.RightmostTrustedRangeStrategy: {headerName:X-Forwarded-For trustedRanges:[192.168.0.0/16 3.3.3.3/32]
+	// realclientip.RightmostTrustedRangeStrategy: {headerName:X-Forwarded-For trustedRanges:[192.168.0.0/16 3.3.3.3/32]}
 	// 2001:db8:cafe::99%eth0
 	// 2001:db8:cafe::99
 	//
 	// realclientip.ChainStrategy: {strategies:[realclientip.SingleIPHeaderStrategy{headerName:Cf-Connecting-Ip} realclientip.RemoteAddrStrategy{}]}
 	// 192.168.1.2
+	//
+	// realclientip.TrustedPeerStrategy: {trustedRanges:[192.168.0.0/16 3.3.3.3/32] inner:realclientip.RightmostTrustedCountStrategy{headerName:Forwarded trustedCount:2}}
+	// 2001:db8:cafe::17
 }

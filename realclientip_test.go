@@ -1459,7 +1459,7 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 			ranges, err := AddressesAndRangesToIPNets(tt.args.trustedRanges...)
 			if err != nil {
 				// We're not testing AddressesAndRangesToIPNets here
-				t.Fatalf("AddressesAndRangesToIPNets failed")
+				t.Fatalf("AddressesAndRangesToIPNets failed: %v", err)
 			}
 
 			strat, err := NewRightmostTrustedRangeStrategy(tt.args.headerName, ranges)
@@ -1478,6 +1478,227 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTrustedPeerStrategy(t *testing.T) {
+	// Ensure the strategy interface is implemented
+	var _ Strategy = TrustedPeerStrategy{}
+
+	type args struct {
+		trustedRanges []string
+		inner         Strategy
+		headers       http.Header
+		remoteAddr    string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{
+			// Peer is a trusted proxy: the inner strategy is consulted as normal.
+			name: "Trusted peer: delegates to inner (Count)",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 2)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 10.0.0.1`},
+				},
+				remoteAddr: "10.0.0.5:555",
+			},
+			want: "3.3.3.3",
+		},
+		{
+			// The core fix: peer is a valid IP outside the trusted ranges, so the request
+			// did not arrive through a proxy. The (spoofed) header is NOT consulted.
+			name: "Untrusted peer: refuses, ignores spoofed header (Count)",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 2)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`1.2.3.4, 10.0.0.1`},
+				},
+				remoteAddr: "9.9.9.9:1234",
+			},
+			want: "",
+		},
+		{
+			// The same gap exists for SingleIPHeaderStrategy; the wrapper protects it too.
+			name: "Untrusted peer: refuses, ignores spoofed header (SingleIPHeader)",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewSingleIPHeaderStrategy("X-Real-IP")),
+				headers: http.Header{
+					"X-Real-Ip": []string{`1.2.3.4`},
+				},
+				remoteAddr: "9.9.9.9",
+			},
+			want: "",
+		},
+		{
+			name: "Trusted peer: delegates to inner (SingleIPHeader)",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewSingleIPHeaderStrategy("X-Real-IP")),
+				headers: http.Header{
+					"X-Real-Ip": []string{`1.2.3.4`},
+				},
+				remoteAddr: "10.0.0.5:5",
+			},
+			want: "1.2.3.4",
+		},
+		{
+			// Trusted IPv6 peer: delegates as normal.
+			name: "Trusted IPv6 peer: delegates to inner",
+			args: args{
+				trustedRanges: []string{`fc00::/7`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 1)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3`},
+				},
+				remoteAddr: "[fc00::1]:5",
+			},
+			want: "3.3.3.3",
+		},
+		{
+			// Untrusted IPv6 peer (with a zone) is classified and refused.
+			name: "Untrusted IPv6 peer with zone: refuses",
+			args: args{
+				trustedRanges: []string{`fc00::/7`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 1)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3`},
+				},
+				remoteAddr: "[fe80::1%eth0]:9999",
+			},
+			want: "",
+		},
+		{
+			// Unix-domain-socket peer ("@") is not an IP and cannot be a network spoofing
+			// vector, so the peer cannot be classified and the inner strategy is consulted.
+			name: "Peer Unix socket: delegates to inner",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 1)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 4.4.4.4`},
+				},
+				remoteAddr: "@",
+			},
+			want: "4.4.4.4",
+		},
+		{
+			name: "Peer empty: delegates to inner",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 1)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 4.4.4.4`},
+				},
+				remoteAddr: "",
+			},
+			want: "4.4.4.4",
+		},
+		{
+			name: "Peer garbage: delegates to inner",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 1)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 4.4.4.4`},
+				},
+				remoteAddr: "ohno",
+			},
+			want: "4.4.4.4",
+		},
+		{
+			// Unspecified peer IP (0.0.0.0) is rejected by goodIPAddr, so we cannot
+			// classify it and delegate to the inner strategy.
+			name: "Peer unspecified IP: delegates to inner",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 1)),
+				headers: http.Header{
+					"X-Forwarded-For": []string{`3.3.3.3, 4.4.4.4`},
+				},
+				remoteAddr: "0.0.0.0",
+			},
+			want: "4.4.4.4",
+		},
+		{
+			name: "Error: empty trustedRanges",
+			args: args{
+				trustedRanges: nil,
+				inner:         Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 1)),
+			},
+			wantErr: true,
+		},
+		{
+			name: "Error: nil inner",
+			args: args{
+				trustedRanges: []string{`10.0.0.0/8`},
+				inner:         nil,
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ranges, err := AddressesAndRangesToIPNets(tt.args.trustedRanges...)
+			if err != nil {
+				// We're not testing AddressesAndRangesToIPNets here
+				t.Fatalf("AddressesAndRangesToIPNets failed: %v", err)
+			}
+
+			strat, err := NewTrustedPeerStrategy(ranges, tt.args.inner)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NewTrustedPeerStrategy error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if err != nil {
+				// We can't continue
+				return
+			}
+
+			got := strat.ClientIP(tt.args.headers, tt.args.remoteAddr)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTrustedPeerStrategy_directClientViaChain exercises the documented pattern for a
+// dual-connectable server that must also serve direct clients: gate the header strategy on
+// the peer, then fall back to RemoteAddrStrategy. A directly-connecting attacker gets their
+// own (unspoofable) IP rather than the value they forged in the header.
+func TestTrustedPeerStrategy_directClientViaChain(t *testing.T) {
+	trustedRanges, err := AddressesAndRangesToIPNets("10.0.0.0/8")
+	if err != nil {
+		t.Fatalf("AddressesAndRangesToIPNets failed: %v", err)
+	}
+
+	strat := NewChainStrategy(
+		Must(NewTrustedPeerStrategy(trustedRanges,
+			Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 2)))),
+		RemoteAddrStrategy{},
+	)
+
+	// Same forged header for both requests; only the peer differs.
+	headers := http.Header{"X-Forwarded-For": []string{`1.2.3.4, 10.0.0.1`}}
+
+	// Direct connection: gate refuses, chain falls back to RemoteAddr -> the real peer,
+	// NOT the "1.2.3.4" the attacker tried to inject.
+	if got := strat.ClientIP(headers, "9.9.9.9:1234"); got != "9.9.9.9" {
+		t.Fatalf("direct client: ClientIP = %q, want %q", got, "9.9.9.9")
+	}
+
+	// Proxied request: gate delegates to Count(2) -> the IP the first trusted proxy saw.
+	if got := strat.ClientIP(headers, "10.0.0.9:555"); got != "1.2.3.4" {
+		t.Fatalf("proxied request: ClientIP = %q, want %q", got, "1.2.3.4")
 	}
 }
 

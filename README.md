@@ -44,6 +44,8 @@ For example, if you have 2 levels of trusted reverse proxies, you would probably
 
 So if an empty string is returned, it is either because the strategy choice or configuration is incorrect or your network configuration has changed. In either case, immediate remediation is required.
 
+The one deliberate exception is `TrustedPeerStrategy` (see [below](#servers-reachable-both-directly-and-via-a-proxy)): on a server reachable both directly and via a proxy, it intentionally returns an empty string for requests that did not arrive through a trusted proxy, and you are expected to handle that result rather than treat it as an error.
+
 ### Headers
 
 Leftmost-ish and rightmost-ish strategies support the `X-Forwarded-For` and `Forwarded` headers.
@@ -60,7 +62,25 @@ Do not abuse `ChainStrategy` to check multiple headers. There is likely only one
 
 If your server can be reached *both* through your reverse proxy *and* directly from the internet, a header-based strategy can be tricked: an attacker connecting directly can send a forged `X-Forwarded-For`/`Forwarded` header. The defense is to confirm the connecting peer (`remoteAddr`) is actually one of your proxies before trusting the header.
 
-`RightmostTrustedRangeStrategy` does this for you. It checks `remoteAddr` against its trusted ranges; if the peer is a valid IP that isn't trusted, the request didn't arrive through a proxy, so the header is ignored and the (unspoofable) peer is returned. A non-IP peer such as a Unix-domain socket is treated as local and the header is honored. The other strategies don't have the trusted-range information to do this, so if you use them in a directly-reachable deployment you must verify `remoteAddr` belongs to a trusted proxy yourself.
+`RightmostTrustedRangeStrategy` does this for you. It checks `remoteAddr` against its trusted ranges; if the peer is a valid IP that isn't trusted, the request didn't arrive through a proxy, so the header is ignored and the (unspoofable) peer is returned. A non-IP peer such as a Unix-domain socket is treated as local and the header is honored.
+
+The other header strategies can't self-verify: `RightmostTrustedCountStrategy` holds only a count and `SingleIPHeaderStrategy` only a header name, so neither knows what a trusted proxy looks like. Wrap them in `TrustedPeerStrategy`, which gates the inner strategy on the peer:
+
+```golang
+// Only trust the header when the request came from one of our proxies.
+gate := realclientip.Must(realclientip.NewTrustedPeerStrategy(
+    proxyRanges,
+    realclientip.Must(realclientip.NewRightmostTrustedCountStrategy("X-Forwarded-For", 2)),
+))
+```
+
+If the peer is a trusted proxy (or a non-IP local peer such as a Unix socket), the inner strategy runs as normal. If the peer is a valid IP that isn't trusted, the gate returns `""` without consulting the header. On a dual-connectable server that empty result is expected for non-proxied traffic, not a misconfiguration -- handle it, for example by also serving direct clients with a `ChainStrategy`:
+
+```golang
+strategy := realclientip.NewChainStrategy(gate, realclientip.RemoteAddrStrategy{})
+```
+
+A directly-connecting client then gets its own (unspoofable) IP, while proxied requests still use the header.
 
 #### `Forwarded` header support
 
