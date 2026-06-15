@@ -77,7 +77,7 @@ func Example_playground() {
 	// realclientip.RightmostTrustedCountStrategy: {headerName:Forwarded trustedCount:2}
 	// 2001:db8:cafe::17
 	//
-	// realclientip.RightmostTrustedRangeStrategy: {headerName:X-Forwarded-For trustedRanges:[192.168.0.0/16 3.3.3.3/32]
+	// realclientip.RightmostTrustedRangeStrategy: {headerName:X-Forwarded-For trustedRanges:[192.168.0.0/16 3.3.3.3/32]}
 	// 2001:db8:cafe::99%eth0
 	// 2001:db8:cafe::99
 	//

@@ -127,7 +127,7 @@ func NewTrustedPeerStrategy(trustedRanges []net.IPNet, inner Strategy) (TrustedP
 // headers is expected to be like http.Request.Header.
 // remoteAddr is expected to be like http.Request.RemoteAddr.
 // The returned IP may contain a zone identifier.
-// If no valid IP can be derived, empty string will be returned.
+// Empty string is returned when the peer is untrusted (see below) or no valid IP can be derived.
 //
 // The connecting peer (remoteAddr) is classified first:
 //   - If remoteAddr is a valid IP that IS in the trusted ranges, it is a trusted proxy, so
@@ -558,7 +558,7 @@ func (strat RightmostTrustedRangeStrategy) String() string {
 		}
 		b.WriteString(r.String())
 	}
-	b.WriteString("]")
+	b.WriteString("]}")
 	return b.String()
 }
 
