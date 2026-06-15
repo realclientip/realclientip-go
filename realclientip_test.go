@@ -1459,7 +1459,7 @@ func TestRightmostTrustedRangeStrategy(t *testing.T) {
 			ranges, err := AddressesAndRangesToIPNets(tt.args.trustedRanges...)
 			if err != nil {
 				// We're not testing AddressesAndRangesToIPNets here
-				t.Fatalf("AddressesAndRangesToIPNets failed")
+				t.Fatalf("AddressesAndRangesToIPNets failed: %v", err)
 			}
 
 			strat, err := NewRightmostTrustedRangeStrategy(tt.args.headerName, ranges)
@@ -1649,7 +1649,7 @@ func TestTrustedPeerStrategy(t *testing.T) {
 			ranges, err := AddressesAndRangesToIPNets(tt.args.trustedRanges...)
 			if err != nil {
 				// We're not testing AddressesAndRangesToIPNets here
-				t.Fatalf("AddressesAndRangesToIPNets failed")
+				t.Fatalf("AddressesAndRangesToIPNets failed: %v", err)
 			}
 
 			strat, err := NewTrustedPeerStrategy(ranges, tt.args.inner)
