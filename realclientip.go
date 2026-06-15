@@ -77,7 +77,7 @@ func (strat ChainStrategy) String() string {
 		if i > 0 {
 			b.WriteString(" ")
 		}
-		b.WriteString(fmt.Sprintf("%T%+v", s, s))
+		fmt.Fprintf(&b, "%T%+v", s, s)
 	}
 	b.WriteString("]}")
 	return b.String()
@@ -449,7 +449,7 @@ func (strat RightmostTrustedRangeStrategy) ClientIP(headers http.Header, remoteA
 
 func (strat RightmostTrustedRangeStrategy) String() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("{headerName:%v trustedRanges:[", strat.headerName))
+	fmt.Fprintf(&b, "{headerName:%v trustedRanges:[", strat.headerName)
 	for i, r := range strat.trustedRanges {
 		if i > 0 {
 			b.WriteString(" ")
