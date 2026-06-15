@@ -70,6 +70,9 @@ func Fuzz_parseForwardedListItem(f *testing.F) {
 //   - RightmostTrustedRange never returns an IP inside a trusted range -- which
 //     must hold whether the result came from the header or from the verified
 //     peer (remoteAddr).
+//   - A TrustedPeer-wrapped strategy never returns a (forged) header value when
+//     the peer is a valid IP outside the trusted ranges: a non-empty result
+//     implies the peer was either trusted or not a usable IP.
 func Fuzz_ClientIP_XFF(f *testing.F) {
 	seeds := []struct{ xff, remoteAddr string }{
 		{"1.1.1.1", ""},
@@ -102,6 +105,12 @@ func Fuzz_ClientIP_XFF(f *testing.F) {
 	trusted, err := NewRightmostTrustedRangeStrategy(xForwardedForHdr, trustedRanges)
 	if err != nil {
 		f.Fatalf("NewRightmostTrustedRangeStrategy failed: %v", err)
+	}
+	// A header-only strategy (which cannot self-verify the peer) wrapped in the peer gate.
+	gated, err := NewTrustedPeerStrategy(trustedRanges,
+		Must(NewRightmostTrustedCountStrategy(xForwardedForHdr, 2)))
+	if err != nil {
+		f.Fatalf("NewTrustedPeerStrategy failed: %v", err)
 	}
 
 	// Each strategy paired with the post-condition its result must satisfy.
@@ -143,6 +152,20 @@ func Fuzz_ClientIP_XFF(f *testing.F) {
 			back := c.strat.ClientIP(http.Header{xForwardedForHdr: []string{result}}, remoteAddr)
 			if back != result {
 				t.Fatalf("%T not idempotent: %q -> %q (remoteAddr %q)", c.strat, result, back, remoteAddr)
+			}
+		}
+
+		// The peer gate must never let a header value through when the peer is a valid IP
+		// outside the trusted ranges. A non-empty result therefore implies the peer was
+		// trusted or not a usable IP. (We don't assert the value itself -- when the peer is
+		// trusted the gate is transparent to the inner strategy, whose output the other
+		// invariants don't constrain here.)
+		if gatedResult := gated.ClientIP(http.Header{xForwardedForHdr: []string{xff}}, remoteAddr); gatedResult != "" {
+			if _, err := ParseIPAddr(gatedResult); err != nil {
+				t.Fatalf("TrustedPeerStrategy returned unparseable %q (XFF %q remoteAddr %q)", gatedResult, xff, remoteAddr)
+			}
+			if peer := goodIPAddr(remoteAddr); peer != nil && !isIPContainedInRanges(peer.IP, trustedRanges) {
+				t.Fatalf("TrustedPeerStrategy leaked header for untrusted peer: result %q (XFF %q remoteAddr %q)", gatedResult, xff, remoteAddr)
 			}
 		}
 	})

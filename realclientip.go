@@ -83,6 +83,94 @@ func (strat ChainStrategy) String() string {
 	return b.String()
 }
 
+// TrustedPeerStrategy wraps another Strategy and only consults it when the connecting peer
+// (remoteAddr) is one of the trusted reverse proxies. It exists to protect the header-only
+// strategies -- RightmostTrustedCountStrategy and SingleIPHeaderStrategy in particular --
+// on a server that is reachable both through a trusted proxy and directly.
+//
+// Those strategies decide the client IP purely from a header, on the unstated assumption
+// that the request arrived through a trusted proxy. They cannot verify that assumption
+// themselves: RightmostTrustedCountStrategy holds only a count and SingleIPHeaderStrategy
+// only a header name, so neither knows what a trusted proxy looks like. On a
+// dual-connectable server, an attacker who connects directly can forge the header and
+// spoof the result. Wrapping the strategy in a TrustedPeerStrategy closes that gap by
+// checking the peer before the header is ever trusted.
+//
+// RightmostTrustedRangeStrategy does not need this wrapper: it already holds the trusted
+// ranges and verifies the peer itself.
+//
+// See ClientIP for the exact peer-handling rules. If a third-party WAF, CDN, etc., is
+// used, you SHOULD verify its access to your origin by a means stronger than IP address
+// (e.g., authenticated origin pulls); see RightmostTrustedRangeStrategy for why.
+type TrustedPeerStrategy struct {
+	trustedRanges []net.IPNet
+	inner         Strategy
+}
+
+// NewTrustedPeerStrategy creates a TrustedPeerStrategy. trustedRanges must contain the IP
+// ranges of all trusted reverse proxies that connect directly to this server (that is, the
+// possible values of remoteAddr for a proxied request); it must not be empty. inner is the
+// strategy consulted once the peer is found to be trusted; it must not be nil.
+func NewTrustedPeerStrategy(trustedRanges []net.IPNet, inner Strategy) (TrustedPeerStrategy, error) {
+	if len(trustedRanges) == 0 {
+		return TrustedPeerStrategy{}, fmt.Errorf("TrustedPeerStrategy trustedRanges must not be empty")
+	}
+
+	if inner == nil {
+		return TrustedPeerStrategy{}, fmt.Errorf("TrustedPeerStrategy inner strategy must not be nil")
+	}
+
+	return TrustedPeerStrategy{trustedRanges: trustedRanges, inner: inner}, nil
+}
+
+// ClientIP derives the client IP using this strategy.
+// headers is expected to be like http.Request.Header.
+// remoteAddr is expected to be like http.Request.RemoteAddr.
+// The returned IP may contain a zone identifier.
+// If no valid IP can be derived, empty string will be returned.
+//
+// The connecting peer (remoteAddr) is classified first:
+//   - If remoteAddr is a valid IP that IS in the trusted ranges, it is a trusted proxy, so
+//     the inner strategy is consulted and its result returned.
+//   - If remoteAddr is a valid IP that is NOT in the trusted ranges, the request did not
+//     arrive through a trusted proxy. The header cannot be trusted, so the inner strategy
+//     is NOT consulted and empty string is returned. (To also handle legitimate direct
+//     clients, chain a RemoteAddrStrategy after this one with NewChainStrategy.)
+//   - If remoteAddr is not a usable IP (empty, a Unix-domain-socket peer like "@", or
+//     otherwise unparseable), the peer cannot be classified and the inner strategy is
+//     consulted as normal. This keeps legitimate local-socket topologies working (for
+//     example, client -> CDN -> nginx -(unix socket)-> app); a Unix socket is unreachable
+//     from the network and so cannot be a spoofing vector.
+//
+// Note that an empty-string result here is not necessarily a misconfiguration: on a
+// dual-connectable server it is the expected result for a request that did not arrive
+// through a trusted proxy, and the caller should handle it (reject the request, or fall
+// back to another strategy such as RemoteAddrStrategy).
+func (strat TrustedPeerStrategy) ClientIP(headers http.Header, remoteAddr string) string {
+	// If the connecting peer is a valid IP outside our trusted ranges, the request did not
+	// come through a trusted proxy, so the header is untrustworthy and must not be used.
+	if peer := goodIPAddr(remoteAddr); peer != nil && !isIPContainedInRanges(peer.IP, strat.trustedRanges) {
+		return ""
+	}
+
+	// The peer is a trusted proxy, or is a non-IP local peer that cannot be a network
+	// spoofing vector. Either way, the header may be trusted.
+	return strat.inner.ClientIP(headers, remoteAddr)
+}
+
+func (strat TrustedPeerStrategy) String() string {
+	var b strings.Builder
+	b.WriteString("{trustedRanges:[")
+	for i, r := range strat.trustedRanges {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(r.String())
+	}
+	fmt.Fprintf(&b, "] inner:%T%+v}", strat.inner, strat.inner)
+	return b.String()
+}
+
 // RemoteAddrStrategy returns the client socket IP, stripped of port.
 // This strategy should be used if the server accept direct connections, rather than
 // through a reverse proxy.
@@ -109,6 +197,13 @@ func (strat RemoteAddrStrategy) ClientIP(_ http.Header, remoteAddr string) strin
 // This strategy should be used when the given header is added by a trusted reverse proxy.
 // You must ensure that this header is not spoofable (as is possible with Akamai's use of
 // True-Client-IP, Fastly's default use of Fastly-Client-IP, and Azure's X-Azure-ClientIP).
+//
+// This strategy trusts the header without checking the connecting peer (remoteAddr). On a
+// server that is reachable both through a trusted proxy and directly from the internet, an
+// attacker connecting directly can send a forged header and spoof the result. If your
+// server is reachable both ways, wrap this strategy in a TrustedPeerStrategy, which only
+// consults it when the peer is a trusted proxy.
+//
 // See the single-IP wiki page for more info: https://github.com/realclientip/realclientip-go/wiki/Single-IP-Headers
 type SingleIPHeaderStrategy struct {
 	headerName string
@@ -250,6 +345,13 @@ func (strat RightmostNonPrivateStrategy) ClientIP(headers http.Header, _ string)
 // the first trusted reverse proxy to the X-Forwarded-For or Forwarded header. This
 // Strategy should be used when there is a fixed number of trusted reverse proxies that
 // are appending IP addresses to the header.
+//
+// This strategy assumes the request arrived through those proxies but does not verify it:
+// it trusts the header without checking the connecting peer (remoteAddr). On a server that
+// is reachable both through a trusted proxy and directly from the internet, an attacker
+// connecting directly can send a forged header and spoof the result. If your server is
+// reachable both ways, wrap this strategy in a TrustedPeerStrategy, which only consults it
+// when the peer is a trusted proxy.
 type RightmostTrustedCountStrategy struct {
 	headerName   string
 	trustedCount int
