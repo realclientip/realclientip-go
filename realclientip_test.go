@@ -2249,6 +2249,20 @@ func Test_parseForwardedListItem(t *testing.T) {
 	}
 }
 
+// collectIPAddrList parses every item of the given header into a slice (with nil for
+// invalid items), reproducing the eager full-list behavior that production code used to
+// have before the lazy walkListItems rewrite. It exists only to exercise the split/parse
+// interaction documented by Test_forwardedHeaderRFCDeviations; production code now walks
+// lazily and never materializes the full list.
+func collectIPAddrList(headers http.Header, headerName string) []*net.IPAddr {
+	var result []*net.IPAddr
+	walkListItems(headers, headerName, false, func(rawItem string) bool {
+		result = append(result, parseListItem(headerName, rawItem))
+		return false
+	})
+	return result
+}
+
 // Demonstrate parsing deviations from Forwarded header syntax RFCs, particularly
 // RFC 7239 (Forwarded header) and RFC 7230 (HTTP/1.1 syntax) section 3.2.6.
 func Test_forwardedHeaderRFCDeviations(t *testing.T) {
@@ -2374,8 +2388,8 @@ func Test_forwardedHeaderRFCDeviations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := getIPAddrList(tt.args.headers, tt.args.headerName); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("getIPAddrList() = %v, want %v", got, tt.want)
+			if got := collectIPAddrList(tt.args.headers, tt.args.headerName); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("collectIPAddrList() = %v, want %v", got, tt.want)
 			}
 		})
 	}
