@@ -285,16 +285,11 @@ func NewLeftmostNonPrivateStrategy(headerName string) (LeftmostNonPrivateStrateg
 // The returned IP may contain a zone identifier.
 // If no valid IP can be derived, empty string will be returned.
 func (strat LeftmostNonPrivateStrategy) ClientIP(headers http.Header, _ string) string {
-	ipAddrs := getIPAddrList(headers, strat.headerName)
-	for _, ip := range ipAddrs {
-		if ip != nil && !isPrivateOrLocal(ip.IP) {
-			// This is the leftmost valid, non-private IP
-			return ip.String()
-		}
-	}
-
-	// We failed to find any valid, non-private IP
-	return ""
+	// Unlike the rightmost strategies, this one cannot bound its work. Every item left of the
+	// leftmost non-private IP is written by the client, so a client that sends thousands of
+	// private or invalid items before it makes this walk parse all of them. That is inherent
+	// to finding the leftmost non-private IP.
+	return firstNonPrivate(headers, strat.headerName, false)
 }
 
 // RightmostNonPrivateStrategy derives the client IP from the rightmost valid,
@@ -328,17 +323,25 @@ func NewRightmostNonPrivateStrategy(headerName string) (RightmostNonPrivateStrat
 // The returned IP may contain a zone identifier.
 // If no valid IP can be derived, empty string will be returned.
 func (strat RightmostNonPrivateStrategy) ClientIP(headers http.Header, _ string) string {
-	ipAddrs := getIPAddrList(headers, strat.headerName)
-	// Look backwards through the list of IP addresses
-	for i := len(ipAddrs) - 1; i >= 0; i-- {
-		if ipAddrs[i] != nil && !isPrivateOrLocal(ipAddrs[i].IP) {
-			// This is the rightmost non-private IP
-			return ipAddrs[i].String()
-		}
-	}
+	// The items right of the client's IP are added by our private-space proxies, so the walk
+	// stops within them however many items the client sends.
+	return firstNonPrivate(headers, strat.headerName, true)
+}
 
-	// We failed to find any valid, non-private IP
-	return ""
+// firstNonPrivate walks the header's items left-to-right (or right-to-left, if reverse is
+// true), parsing as it goes, and returns the first valid, non-private IP. It returns "" if
+// there is none. headerName must already be canonicalized.
+func firstNonPrivate(headers http.Header, headerName string, reverse bool) string {
+	var result string
+	walkListItems(headers, headerName, reverse, func(rawItem string) bool {
+		ipAddr := parseListItem(headerName, rawItem)
+		if ipAddr != nil && !isPrivateOrLocal(ipAddr.IP) {
+			result = ipAddr.String()
+			return true
+		}
+		return false
+	})
+	return result
 }
 
 // RightmostTrustedCountStrategy derives the client IP from the valid IP address added by
@@ -387,27 +390,30 @@ func NewRightmostTrustedCountStrategy(headerName string, trustedCount int) (Righ
 // The returned IP may contain a zone identifier.
 // If no valid IP can be derived, empty string will be returned.
 func (strat RightmostTrustedCountStrategy) ClientIP(headers http.Header, _ string) string {
-	ipAddrs := getIPAddrList(headers, strat.headerName)
+	// We want the IP added by the first trusted proxy: the trustedCount-th item from the
+	// right (the rightmost item is the 1st). Walk right-to-left, counting every item,
+	// including empty and invalid ones, and parse only the target item.
+	var result string
+	count := 0
+	walkListItems(headers, strat.headerName, true, func(rawItem string) bool {
+		count++
+		if count < strat.trustedCount {
+			// Not our target yet; skip it without parsing.
+			return false
+		}
 
-	// We want the (N-1)th from the rightmost. For example, if there's only one
-	// trusted proxy, we want the last.
-	rightmostIndex := len(ipAddrs) - 1
-	targetIndex := rightmostIndex - (strat.trustedCount - 1)
+		// This is the trustedCount-th item from the right: our target. If it doesn't hold a
+		// valid IP, that's a misconfiguration (our first trusted proxy didn't add a valid IP
+		// address to the header) and result stays "".
+		if ipAddr := parseListItem(strat.headerName, rawItem); ipAddr != nil {
+			result = ipAddr.String()
+		}
+		return true
+	})
 
-	if targetIndex < 0 {
-		// This is a misconfiguration error. There were fewer IPs than we expected.
-		return ""
-	}
-
-	resultIP := ipAddrs[targetIndex]
-
-	if resultIP == nil {
-		// This is a misconfiguration error. Our first trusted proxy didn't add a
-		// valid IP address to the header.
-		return ""
-	}
-
-	return resultIP.String()
+	// If the walk ended before reaching trustedCount items, there were fewer IPs than we
+	// expected — also a misconfiguration — and result is "".
+	return result
 }
 
 // AddressesAndRangesToIPNets converts a slice of strings with IPv4 and IPv6 addresses and
@@ -528,25 +534,27 @@ func (strat RightmostTrustedRangeStrategy) ClientIP(headers http.Header, remoteA
 		return peer.String()
 	}
 
-	ipAddrs := getIPAddrList(headers, strat.headerName)
-	// Look backwards through the list of IP addresses
-	for i := len(ipAddrs) - 1; i >= 0; i-- {
-		if ipAddrs[i] != nil && isIPContainedInRanges(ipAddrs[i].IP, strat.trustedRanges) {
-			// This IP is trusted
-			continue
+	// Walk the header right-to-left, parsing items as we go, and stop at the first item that
+	// is not a trusted IP. We deliberately do NOT parse the whole header: the number of items
+	// is attacker-controlled, so we only do work back to the item we need.
+	var result string
+	walkListItems(headers, strat.headerName, true, func(rawItem string) bool {
+		ipAddr := parseListItem(strat.headerName, rawItem)
+		if ipAddr != nil && isIPContainedInRanges(ipAddr.IP, strat.trustedRanges) {
+			// This IP is trusted; keep looking further left.
+			return false
 		}
 
-		// At this point we have found the first-from-the-rightmost untrusted IP
-
-		if ipAddrs[i] == nil {
-			return ""
+		// This is the first-from-the-rightmost untrusted item. If it's a valid IP it's our
+		// result; if it's invalid (nil), the walk ends with an empty result.
+		if ipAddr != nil {
+			result = ipAddr.String()
 		}
+		return true
+	})
 
-		return ipAddrs[i].String()
-	}
-
-	// Either there are no addresses or they are all in our trusted ranges
-	return ""
+	// result is "" if there were no items or they were all in our trusted ranges.
+	return result
 }
 
 func (strat RightmostTrustedRangeStrategy) String() string {
@@ -580,44 +588,93 @@ func lastHeader(headers http.Header, headerName string) string {
 	return matches[len(matches)-1]
 }
 
-// getIPAddrList creates a single list of all of the X-Forwarded-For or Forwarded header
-// values, in order. Any invalid IPs will result in nil elements. headerName must already
-// be canonicalized.
-func getIPAddrList(headers http.Header, headerName string) []*net.IPAddr {
-	var result []*net.IPAddr
+// walkListItems visits the comma-separated items of an X-Forwarded-For or Forwarded header
+// one at a time, calling fn with each trimmed (but unparsed) item, and stops as soon as fn
+// returns true.
+//
+// IMPORTANT (especially if you are porting this library to another language): the entire
+// point of this function is to do work proportional to the number of items the caller
+// actually needs to inspect, NOT proportional to the number of items in the header. A
+// request can arrive carrying a header with tens of thousands of comma-separated entries.
+// An implementation that eagerly splits and parses the whole list (for example,
+// strings.Split followed by parsing every element) does O(number-of-commas) allocations and
+// work even when the strategy only needs the first or last item — an attacker-controllable
+// amount of work per request. To avoid that, this function:
+//   - scans for one comma at a time with IndexByte/LastIndexByte instead of splitting the
+//     whole value up front, so there is no O(n) backing slice; and
+//   - hands the caller each *raw* item and lets it decide whether to parse it, so a strategy
+//     that only needs the Nth item from one end never parses the items it skips.
+//
+// Every caller stops early (returns true from fn) once it has what it needs.
+//
+// headerName must already be canonicalized. When reverse is false the items are visited
+// left-to-right; when true, right-to-left — both across multiple instances of the header
+// and within each instance's value.
+//
+// The item boundaries match strings.Split(value, ",") exactly: N commas produce N+1 items,
+// including empty items from leading, trailing, or doubled commas.
+// RightmostTrustedCountStrategy relies on this, because it counts positions (including
+// invalid ones) from the right. As elsewhere in this package, a comma inside a quoted
+// Forwarded value is also treated as an item separator (see
+// Test_forwardedHeaderRFCDeviations); the scan is deliberately not quote-aware.
+func walkListItems(headers http.Header, headerName string, reverse bool, fn func(rawItem string) bool) {
+	// Note that Go's Header map uses canonicalized keys. There may be multiple instances of
+	// the header; we visit them in order (or reverse order) without joining them, which
+	// would copy every value.
+	values := headers[headerName]
 
-	// There may be multiple XFF headers present. We need to iterate through them all,
-	// in order, and collect all of the IPs.
-	// Note that we're not joining all of the headers into a single string and then
-	// splitting. Doing it that way would use more memory.
-	// Note that Go's Header map uses canonicalized keys.
-	for _, h := range headers[headerName] {
-		// We now have a string with comma-separated list items
-		for _, rawListItem := range strings.Split(h, ",") {
-			// The IPs are often comma-space separated, so we'll need to trim the string
-			rawListItem = strings.TrimSpace(rawListItem)
-
-			var ipAddr *net.IPAddr
-			// If this is the XFF header, rawListItem is just an IP;
-			// if it's the Forwarded header, then there's more parsing to do.
-			if headerName == forwardedHdr {
-				ipAddr = parseForwardedListItem(rawListItem)
-			} else { // == XFF
-				ipAddr = goodIPAddr(rawListItem)
+	if !reverse {
+		for _, h := range values {
+			for {
+				i := strings.IndexByte(h, ',')
+				if i < 0 {
+					// The last (or only) item in this value.
+					if fn(strings.TrimSpace(h)) {
+						return
+					}
+					break
+				}
+				if fn(strings.TrimSpace(h[:i])) {
+					return
+				}
+				h = h[i+1:]
 			}
-
-			// ipAddr is nil if not valid
-			result = append(result, ipAddr)
 		}
+		return
 	}
 
-	// Possible performance improvements:
-	// Here we are parsing _all_ of the IPs in the XFF headers, but we don't need all of
-	// them. Instead, we could start from the left or the right (depending on strategy),
-	// parse as we go, and stop when we've come to the one we want. But that would make
-	// the various strategies somewhat more complex.
+	// reverse: visit later header instances first, and within each value scan from the right,
+	// so we never materialize or parse the items to the left of our target.
+	for hi := len(values) - 1; hi >= 0; hi-- {
+		h := values[hi]
+		for {
+			i := strings.LastIndexByte(h, ',')
+			if i < 0 {
+				// The first (or only) item in this value.
+				if fn(strings.TrimSpace(h)) {
+					return
+				}
+				break
+			}
+			if fn(strings.TrimSpace(h[i+1:])) {
+				return
+			}
+			h = h[:i]
+		}
+	}
+}
 
-	return result
+// parseListItem parses a single X-Forwarded-For or Forwarded list item into an IP address,
+// returning nil if it is not a valid IP. headerName must already be canonicalized. This is
+// the per-item parse that walkListItems intentionally does not perform itself, so that
+// callers only pay the parsing cost for the items they actually inspect.
+func parseListItem(headerName, rawListItem string) *net.IPAddr {
+	// If this is the XFF header, rawListItem is just an IP; if it's the Forwarded header,
+	// then there's more parsing to do.
+	if headerName == forwardedHdr {
+		return parseForwardedListItem(rawListItem)
+	}
+	return goodIPAddr(rawListItem)
 }
 
 // parseForwardedListItem parses a Forwarded header list item, and returns the "for" IP

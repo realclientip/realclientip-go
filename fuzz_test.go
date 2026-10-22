@@ -5,6 +5,8 @@ package realclientip
 import (
 	"net"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +54,59 @@ func Fuzz_parseForwardedListItem(f *testing.F) {
 	f.Fuzz(func(t *testing.T, fwd string) {
 		if ipAddr := parseForwardedListItem(fwd); ipAddr != nil && ipAddr.IP == nil {
 			t.Fatalf("parseForwardedListItem(%q) returned a non-nil *net.IPAddr with a nil IP", fwd)
+		}
+	})
+}
+
+// Fuzz_walkListItems checks the item boundaries walkListItems produces, in both
+// directions, against strings.Split over one or two header instances. The forward
+// and reverse walks are separate loops, and RightmostTrustedCountStrategy depends
+// on the reverse walk counting positions exactly as strings.Split would.
+func Fuzz_walkListItems(f *testing.F) {
+	seeds := []struct {
+		first, second string
+		twoInstances  bool
+	}{
+		{"1.1.1.1", "", false},
+		{"1.1.1.1, 2.2.2.2", "3.3.3.3", true},
+		{",1.1.1.1", "2.2.2.2,", true},
+		{"a,,b", " , ", true},
+		{"", "", true},
+		{" x ", "", false},
+	}
+	for _, s := range seeds {
+		f.Add(s.first, s.second, s.twoInstances)
+	}
+
+	f.Fuzz(func(t *testing.T, first, second string, twoInstances bool) {
+		values := []string{first}
+		if twoInstances {
+			values = append(values, second)
+		}
+		headers := http.Header{xForwardedForHdr: values}
+
+		var want []string
+		for _, v := range values {
+			for _, item := range strings.Split(v, ",") {
+				want = append(want, strings.TrimSpace(item))
+			}
+		}
+
+		walk := func(reverse bool) []string {
+			var got []string
+			walkListItems(headers, xForwardedForHdr, reverse, func(rawItem string) bool {
+				got = append(got, rawItem)
+				return false
+			})
+			return got
+		}
+
+		if got := walk(false); !slices.Equal(got, want) {
+			t.Fatalf("forward walk of %q = %q, want %q", values, got, want)
+		}
+		slices.Reverse(want)
+		if got := walk(true); !slices.Equal(got, want) {
+			t.Fatalf("reverse walk of %q = %q, want %q", values, got, want)
 		}
 	})
 }
