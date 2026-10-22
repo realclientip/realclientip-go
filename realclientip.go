@@ -469,6 +469,10 @@ func AddressesAndRangesToIPNets(ranges ...string) ([]net.IPNet, error) {
 // This strategy should be used when the IP ranges of the reverse proxies between the
 // internet and the server are known.
 //
+// As with RightmostTrustedCountStrategy, the name describes the approach (walk the header
+// from the right) and its configuration (trusted ranges). The result is the rightmost IP
+// that is not trusted: the IP that the first trusted proxy on the path saw as its peer.
+//
 // This strategy also verifies the connecting peer (remoteAddr): if the peer is a valid IP
 // that is not in the trusted ranges, the request did not arrive through a trusted proxy,
 // the header is untrustworthy, and the peer itself is returned. This makes the strategy
