@@ -285,22 +285,11 @@ func NewLeftmostNonPrivateStrategy(headerName string) (LeftmostNonPrivateStrateg
 // The returned IP may contain a zone identifier.
 // If no valid IP can be derived, empty string will be returned.
 func (strat LeftmostNonPrivateStrategy) ClientIP(headers http.Header, _ string) string {
-	// Walk the header left-to-right, parsing items as we go, and stop at the first valid,
-	// non-private IP. We deliberately do NOT parse the whole header: the number of items is
-	// attacker-controlled, so we only do work up to the item we need.
-	var result string
-	walkListItems(headers, strat.headerName, false, func(rawItem string) bool {
-		ipAddr := parseListItem(strat.headerName, rawItem)
-		if ipAddr != nil && !isPrivateOrLocal(ipAddr.IP) {
-			// This is the leftmost valid, non-private IP.
-			result = ipAddr.String()
-			return true
-		}
-		return false
-	})
-
-	// result is "" if we failed to find any valid, non-private IP.
-	return result
+	// Unlike the rightmost strategies, this one cannot bound its work. Every item left of the
+	// leftmost non-private IP is written by the client, so a client that sends thousands of
+	// private or invalid items before it makes this walk parse all of them. That is inherent
+	// to finding the leftmost non-private IP.
+	return firstNonPrivate(headers, strat.headerName, false)
 }
 
 // RightmostNonPrivateStrategy derives the client IP from the rightmost valid,
@@ -334,21 +323,24 @@ func NewRightmostNonPrivateStrategy(headerName string) (RightmostNonPrivateStrat
 // The returned IP may contain a zone identifier.
 // If no valid IP can be derived, empty string will be returned.
 func (strat RightmostNonPrivateStrategy) ClientIP(headers http.Header, _ string) string {
-	// Walk the header right-to-left, parsing items as we go, and stop at the first valid,
-	// non-private IP. We deliberately do NOT parse the whole header: the number of items is
-	// attacker-controlled, so we only do work back to the item we need.
+	// The items right of the client's IP are added by our private-space proxies, so the walk
+	// stops within them however many items the client sends.
+	return firstNonPrivate(headers, strat.headerName, true)
+}
+
+// firstNonPrivate walks the header's items left-to-right (or right-to-left, if reverse is
+// true), parsing as it goes, and returns the first valid, non-private IP. It returns "" if
+// there is none. headerName must already be canonicalized.
+func firstNonPrivate(headers http.Header, headerName string, reverse bool) string {
 	var result string
-	walkListItems(headers, strat.headerName, true, func(rawItem string) bool {
-		ipAddr := parseListItem(strat.headerName, rawItem)
+	walkListItems(headers, headerName, reverse, func(rawItem string) bool {
+		ipAddr := parseListItem(headerName, rawItem)
 		if ipAddr != nil && !isPrivateOrLocal(ipAddr.IP) {
-			// This is the rightmost valid, non-private IP.
 			result = ipAddr.String()
 			return true
 		}
 		return false
 	})
-
-	// result is "" if we failed to find any valid, non-private IP.
 	return result
 }
 
@@ -399,10 +391,8 @@ func NewRightmostTrustedCountStrategy(headerName string, trustedCount int) (Righ
 // If no valid IP can be derived, empty string will be returned.
 func (strat RightmostTrustedCountStrategy) ClientIP(headers http.Header, _ string) string {
 	// We want the IP added by the first trusted proxy: the trustedCount-th item from the
-	// right (the rightmost item is the 1st). Walk right-to-left, counting items — including
-	// invalid ones, to match the original full-list indexing — and parse only the single
-	// item we actually want. This is the strategy where lazy parsing matters most: the old
-	// code parsed every item just to index one of them.
+	// right (the rightmost item is the 1st). Walk right-to-left, counting every item,
+	// including empty and invalid ones, and parse only the target item.
 	var result string
 	count := 0
 	walkListItems(headers, strat.headerName, true, func(rawItem string) bool {
@@ -556,8 +546,7 @@ func (strat RightmostTrustedRangeStrategy) ClientIP(headers http.Header, remoteA
 		}
 
 		// This is the first-from-the-rightmost untrusted item. If it's a valid IP it's our
-		// result; if it's invalid (nil) we stop with an empty result, matching the original
-		// behavior of returning "" at the first untrusted-but-invalid position.
+		// result; if it's invalid (nil), the walk ends with an empty result.
 		if ipAddr != nil {
 			result = ipAddr.String()
 		}
@@ -615,6 +604,7 @@ func lastHeader(headers http.Header, headerName string) string {
 //     whole value up front, so there is no O(n) backing slice; and
 //   - hands the caller each *raw* item and lets it decide whether to parse it, so a strategy
 //     that only needs the Nth item from one end never parses the items it skips.
+//
 // Every caller stops early (returns true from fn) once it has what it needs.
 //
 // headerName must already be canonicalized. When reverse is false the items are visited
@@ -622,11 +612,11 @@ func lastHeader(headers http.Header, headerName string) string {
 // and within each instance's value.
 //
 // The item boundaries match strings.Split(value, ",") exactly: N commas produce N+1 items,
-// including empty items from leading, trailing, or doubled commas. RightmostTrustedCount
-// relies on this, because it counts positions (including invalid ones) from the right. As
-// elsewhere in this package, a comma inside a quoted Forwarded value is also treated as an
-// item separator (see Test_forwardedHeaderRFCDeviations); the lazy scan deliberately
-// preserves that existing behavior rather than becoming quote-aware.
+// including empty items from leading, trailing, or doubled commas.
+// RightmostTrustedCountStrategy relies on this, because it counts positions (including
+// invalid ones) from the right. As elsewhere in this package, a comma inside a quoted
+// Forwarded value is also treated as an item separator (see
+// Test_forwardedHeaderRFCDeviations); the scan is deliberately not quote-aware.
 func walkListItems(headers http.Header, headerName string, reverse bool, fn func(rawItem string) bool) {
 	// Note that Go's Header map uses canonicalized keys. There may be multiple instances of
 	// the header; we visit them in order (or reverse order) without joining them, which

@@ -2249,11 +2249,9 @@ func Test_parseForwardedListItem(t *testing.T) {
 	}
 }
 
-// collectIPAddrList parses every item of the given header into a slice (with nil for
-// invalid items), reproducing the eager full-list behavior that production code used to
-// have before the lazy walkListItems rewrite. It exists only to exercise the split/parse
-// interaction documented by Test_forwardedHeaderRFCDeviations; production code now walks
-// lazily and never materializes the full list.
+// collectIPAddrList uses walkListItems to parse every item of the given header into a
+// slice, with nil for invalid items. It lets Test_forwardedHeaderRFCDeviations check how
+// item splitting and parsing interact. Production code never builds the full list.
 func collectIPAddrList(headers http.Header, headerName string) []*net.IPAddr {
 	var result []*net.IPAddr
 	walkListItems(headers, headerName, false, func(rawItem string) bool {
