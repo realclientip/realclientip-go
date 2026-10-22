@@ -1,0 +1,3 @@
+# The main ruleset requires code owner review, so a github-actions[bot]
+# approval never satisfies it.
+* @adam-p
