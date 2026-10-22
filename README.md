@@ -115,7 +115,7 @@ This library uses the older `net` package (`net.IP`, `net.IPAddr`, `net.IPNet`) 
 
 When the library was first written, Go 1.18 had only just been released, and `netip` along with it. Using `net` kept the required Go version low enough not to exclude users. That rationale no longer applies (the minimum is now 1.21), but we're staying on `net` for now anyway:
 
-* Switching to `netip` would change the signatures of `ParseIPAddr`, `MustParseIPAddr`, `AddressesAndRangesToIPNets`, and `NewRightmostTrustedRangeStrategy`. That is a breaking change, which would require a v2 module (`.../v2`) and force every user to update their imports.
+* Switching to `netip` would change the signatures of `ParseIPAddr`, `MustParseIPAddr`, `AddressesAndRangesToIPNets`, `NewRightmostTrustedRangeStrategy`, and `NewTrustedPeerStrategy`. That is a breaking change, which would require a v2 module (`.../v2`) and force every user to update their imports.
 * The benefit is limited. The strategies return a normalized, canonical IP _string_, so callers who want a `netip.Addr` can convert the result in one line (see below). Being string-typed at its boundary makes the library representation-agnostic.
 
 We expect to move to `netip` if and when a v2 is justified for other reasons; bundling it in then makes the migration nearly free. At that point we would likely also embrace `netip`'s stricter parsing -- it rejects brackets, ports, and IPv4 zones -- and tighten the [input strictness](#input-format-strictness) accordingly.

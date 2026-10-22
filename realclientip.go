@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -109,8 +110,9 @@ type TrustedPeerStrategy struct {
 
 // NewTrustedPeerStrategy creates a TrustedPeerStrategy. trustedRanges must contain the IP
 // ranges of all trusted reverse proxies that connect directly to this server (that is, the
-// possible values of remoteAddr for a proxied request); it must not be empty. inner is the
-// strategy consulted once the peer is found to be trusted; it must not be nil.
+// possible values of remoteAddr for a proxied request); it must not be empty. The strategy
+// keeps its own copy of trustedRanges. inner is the strategy consulted once the peer is found
+// to be trusted; it must not be nil.
 func NewTrustedPeerStrategy(trustedRanges []net.IPNet, inner Strategy) (TrustedPeerStrategy, error) {
 	if len(trustedRanges) == 0 {
 		return TrustedPeerStrategy{}, fmt.Errorf("TrustedPeerStrategy trustedRanges must not be empty")
@@ -120,7 +122,7 @@ func NewTrustedPeerStrategy(trustedRanges []net.IPNet, inner Strategy) (TrustedP
 		return TrustedPeerStrategy{}, fmt.Errorf("TrustedPeerStrategy inner strategy must not be nil")
 	}
 
-	return TrustedPeerStrategy{trustedRanges: trustedRanges, inner: inner}, nil
+	return TrustedPeerStrategy{trustedRanges: cloneIPNets(trustedRanges), inner: inner}, nil
 }
 
 // ClientIP derives the client IP using this strategy.
@@ -467,6 +469,10 @@ func AddressesAndRangesToIPNets(ranges ...string) ([]net.IPNet, error) {
 // This strategy should be used when the IP ranges of the reverse proxies between the
 // internet and the server are known.
 //
+// As with RightmostTrustedCountStrategy, the name describes the approach (walk the header
+// from the right) and its configuration (trusted ranges). The result is the rightmost IP
+// that is not trusted: the IP that the first trusted proxy on the path saw as its peer.
+//
 // This strategy also verifies the connecting peer (remoteAddr): if the peer is a valid IP
 // that is not in the trusted ranges, the request did not arrive through a trusted proxy,
 // the header is untrustworthy, and the peer itself is returned. This makes the strategy
@@ -489,7 +495,8 @@ type RightmostTrustedRangeStrategy struct {
 // NewRightmostTrustedRangeStrategy creates a RightmostTrustedRangeStrategy. headerName
 // must be "X-Forwarded-For" or "Forwarded". trustedRanges must contain all trusted
 // reverse proxies on the path to this server. trustedRanges can be private/internal or
-// external (for example, if a third-party reverse proxy is used).
+// external (for example, if a third-party reverse proxy is used). The strategy keeps its
+// own copy of trustedRanges.
 func NewRightmostTrustedRangeStrategy(headerName string, trustedRanges []net.IPNet) (RightmostTrustedRangeStrategy, error) {
 	if headerName == "" {
 		return RightmostTrustedRangeStrategy{}, fmt.Errorf("RightmostTrustedRangeStrategy header must not be empty")
@@ -503,7 +510,7 @@ func NewRightmostTrustedRangeStrategy(headerName string, trustedRanges []net.IPN
 		return RightmostTrustedRangeStrategy{}, fmt.Errorf("RightmostTrustedRangeStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
-	return RightmostTrustedRangeStrategy{headerName: headerName, trustedRanges: trustedRanges}, nil
+	return RightmostTrustedRangeStrategy{headerName: headerName, trustedRanges: cloneIPNets(trustedRanges)}, nil
 }
 
 // ClientIP derives the client IP using this strategy.
@@ -812,6 +819,21 @@ func SplitHostZone(s string) (host, zone string) {
 		host = s
 	}
 	return
+}
+
+// cloneIPNets returns a deep copy of ranges, including each IPNet's IP and Mask bytes.
+// Constructors store a copy so that a caller who keeps and later modifies the slice it
+// passed in can't change a strategy's behavior, or race with its ClientIP calls (which must
+// be threadsafe).
+func cloneIPNets(ranges []net.IPNet) []net.IPNet {
+	if ranges == nil {
+		return nil
+	}
+	result := make([]net.IPNet, len(ranges))
+	for i, r := range ranges {
+		result[i] = net.IPNet{IP: slices.Clone(r.IP), Mask: slices.Clone(r.Mask)}
+	}
+	return result
 }
 
 // mustParseCIDR panics if net.ParseCIDR fails

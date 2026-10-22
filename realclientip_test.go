@@ -1702,6 +1702,68 @@ func TestTrustedPeerStrategy_directClientViaChain(t *testing.T) {
 	}
 }
 
+// TestConstructorsCopyTrustedRanges checks that strategies keep their own copy of
+// trustedRanges, so a caller that later modifies the slice it passed in, or the IP and Mask
+// bytes of its entries, can't change a live strategy's behavior.
+func TestConstructorsCopyTrustedRanges(t *testing.T) {
+	headers := http.Header{"X-Forwarded-For": []string{`1.2.3.4, 10.0.0.1`}}
+	const remoteAddr = "10.0.0.9:555"
+	const want = "1.2.3.4"
+
+	strategies := []struct {
+		name     string
+		newStrat func(trustedRanges []net.IPNet) Strategy
+	}{
+		{
+			name: "TrustedPeerStrategy",
+			newStrat: func(r []net.IPNet) Strategy {
+				return Must(NewTrustedPeerStrategy(r, Must(NewRightmostTrustedCountStrategy("X-Forwarded-For", 2))))
+			},
+		},
+		{
+			name: "RightmostTrustedRangeStrategy",
+			newStrat: func(r []net.IPNet) Strategy {
+				return Must(NewRightmostTrustedRangeStrategy("X-Forwarded-For", r))
+			},
+		},
+	}
+
+	// Each modification stops 10.0.0.9 (the peer) from being in the first range.
+	modifications := []struct {
+		name   string
+		modify func(trustedRanges []net.IPNet)
+	}{
+		{"replace entry", func(r []net.IPNet) { r[0] = mustParseCIDR("192.168.0.0/16") }},
+		// To4 returns a slice that shares the IP's bytes, so this writes through to it.
+		{"modify IP bytes", func(r []net.IPNet) { r[0].IP.To4()[0] = 192 }},
+		{"modify Mask bytes", func(r []net.IPNet) {
+			for i := range r[0].Mask {
+				r[0].Mask[i] = 0xff
+			}
+		}},
+	}
+
+	for _, s := range strategies {
+		for _, m := range modifications {
+			t.Run(s.name+"/"+m.name, func(t *testing.T) {
+				trustedRanges, err := AddressesAndRangesToIPNets("10.0.0.0/8")
+				if err != nil {
+					t.Fatalf("AddressesAndRangesToIPNets failed: %v", err)
+				}
+				strat := s.newStrat(trustedRanges)
+
+				if got := strat.ClientIP(headers, remoteAddr); got != want {
+					t.Fatalf("before modification: ClientIP = %q, want %q", got, want)
+				}
+				m.modify(trustedRanges)
+				if got := strat.ClientIP(headers, remoteAddr); got != want {
+					t.Fatalf("after modifying the caller's trustedRanges: ClientIP = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestChainStrategy(t *testing.T) {
 	type args struct {
 		strategies []Strategy
