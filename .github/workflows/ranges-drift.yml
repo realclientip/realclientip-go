@@ -41,11 +41,16 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # A GITHUB_TOKEN push does not trigger other workflows, so the Test
+      # workflow won't run on the PR this opens. Test the regenerated ranges
+      # here instead, so a refresh that breaks the build never becomes a PR.
+      - name: Test
+        if: steps.drift.outputs.changed == 'true'
+        run: go test ./...
+
       # Push the regenerated files to a fixed branch and open a PR if one isn't
       # already open. Reusing the branch means re-runs update the existing PR
-      # instead of spawning duplicates. (A GITHUB_TOKEN push does not trigger
-      # other workflows, so the test workflow won't run on this PR; review the
-      # data diff and re-run tests locally if needed before merging.)
+      # instead of spawning duplicates.
       - name: Open or update PR
         if: steps.drift.outputs.changed == 'true'
         run: |
