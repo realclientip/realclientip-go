@@ -379,7 +379,7 @@ func NewRightmostTrustedCountStrategy(headerName string, trustedCount int) (Righ
 	headerName = http.CanonicalHeaderKey(headerName)
 
 	if headerName != xForwardedForHdr && headerName != forwardedHdr {
-		return RightmostTrustedCountStrategy{}, fmt.Errorf("RightmostNonPrivateStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
+		return RightmostTrustedCountStrategy{}, fmt.Errorf("RightmostTrustedCountStrategy header must be %s or %s", xForwardedForHdr, forwardedHdr)
 	}
 
 	return RightmostTrustedCountStrategy{headerName: headerName, trustedCount: trustedCount}, nil
